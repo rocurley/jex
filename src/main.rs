@@ -157,7 +157,7 @@ fn main() -> Result<(), io::Error> {
     Ok(())
 }
 
-fn json_to_text_2<'a>(
+fn json_to_text<'a>(
     indent_n: usize,
     v: NodeRef<'a, PseudoNode>,
     focus: Option<NodeId>,
@@ -221,13 +221,9 @@ fn json_to_text_2<'a>(
             if has_comma {
                 close.push(Span::raw(","));
             }
-            let values = v.children().flat_map(move |v| {
-                if v.next_sibling().is_none() {
-                    json_to_text_2(indent_n + 1, v, focus)
-                } else {
-                    Box::new(json_to_text_2(indent_n + 1, v, focus))
-                }
-            });
+            let values = v
+                .children()
+                .flat_map(move |v| json_to_text(indent_n + 1, v, focus));
             Box::new(once(prefix).chain(values).chain(once(close)))
         }
         Node::Object if v.value().folded => {
@@ -248,13 +244,9 @@ fn json_to_text_2<'a>(
             if has_comma {
                 close.push(Span::raw(","));
             }
-            let values = v.children().flat_map(move |v| {
-                if v.next_sibling().is_none() {
-                    json_to_text_2(indent_n + 1, v, focus)
-                } else {
-                    Box::new(json_to_text_2(indent_n + 1, v, focus))
-                }
-            });
+            let values = v
+                .children()
+                .flat_map(move |v| json_to_text(indent_n + 1, v, focus));
             Box::new(once(prefix).chain(values).chain(once(close)))
         }
     }
@@ -315,7 +307,7 @@ impl App {
                 .enumerate()
                 .flat_map(|(i, tree)| {
                     let node_focus = if i == focus.0 { Some(focus.1) } else { None };
-                    json_to_text_2(0, tree.root(), node_focus)
+                    json_to_text(0, tree.root(), node_focus)
                 })
                 .map(Spans::from)
                 .collect();
