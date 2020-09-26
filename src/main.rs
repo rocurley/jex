@@ -30,14 +30,17 @@ enum Node {
     Object,
 }
 
-fn json_to_tree(v: Value) -> Tree<PseudoNode> {
-    let mut tree = Tree::new(PseudoNode {
-        node: json_to_node(&v),
-        key: None,
-        folded: false,
-    });
-    append_json_children(tree.root_mut(), v);
-    tree
+fn jsons_to_trees<I: Iterator<Item = Value>>(vs: I) -> Vec<Tree<PseudoNode>> {
+    vs.map(|v| {
+        let mut tree = Tree::new(PseudoNode {
+            node: json_to_node(&v),
+            key: None,
+            folded: false,
+        });
+        append_json_children(tree.root_mut(), v);
+        tree
+    })
+    .collect()
 }
 
 fn json_to_node(v: &Value) -> Node {
@@ -115,20 +118,36 @@ fn main() -> Result<(), io::Error> {
         match c? {
             Key::Esc => break,
             Key::Down => {
-                let focus = app.content.get(app.focus).expect("Invalid focus");
-                if let Some(next) = next_node(focus) {
-                    app.focus = next.id();
+                let focus_node = app.content[app.focus.0]
+                    .get(app.focus.1)
+                    .expect("Invalid focus");
+                match next_node(focus_node) {
+                    Some(next) => app.focus.1 = next.id(),
+                    None if app.focus.0 + 1 == app.content.len() => {}
+                    None => {
+                        app.focus = (app.focus.0 + 1, app.content[app.focus.0 + 1].root().id());
+                    }
                 }
             }
             Key::Up => {
-                let focus = app.content.get(app.focus).expect("Invalid focus");
-                if let Some(prior) = prior_node(focus) {
-                    app.focus = prior.id();
+                let focus_node = app.content[app.focus.0]
+                    .get(app.focus.1)
+                    .expect("Invalid focus");
+                match prior_node(focus_node) {
+                    Some(prior) => app.focus.1 = prior.id(),
+                    None if app.focus.0 == 0 => {}
+                    None => {
+                        let root = app.content[app.focus.0 - 1].root();
+                        let focus_node = root.last_children().last().unwrap_or(root);
+                        app.focus = (app.focus.0 - 1, focus_node.id());
+                    }
                 }
             }
             Key::Char('z') => {
-                let mut focus = app.content.get_mut(app.focus).expect("Invalid focus");
-                let node = focus.value();
+                let mut focus_node = app.content[app.focus.0]
+                    .get_mut(app.focus.1)
+                    .expect("Invalid focus");
+                let node = focus_node.value();
                 node.folded = !node.folded;
             }
             _ => {}
@@ -141,10 +160,10 @@ fn main() -> Result<(), io::Error> {
 fn json_to_text_2<'a>(
     indent_n: usize,
     v: NodeRef<'a, PseudoNode>,
-    focus: NodeId,
+    focus: Option<NodeId>,
 ) -> Box<dyn Iterator<Item = Vec<Span<'a>>> + 'a> {
     let indent = Span::raw("  ".repeat(indent_n));
-    let style = if v.id() == focus {
+    let style = if Some(v.id()) == focus {
         Style::default().bg(Color::Blue)
     } else {
         Style::default()
@@ -245,8 +264,8 @@ type Screen = AlternateScreen<MouseTerminal<RawTerminal<io::Stdout>>>;
 
 struct App {
     terminal: Terminal<TermionBackend<Screen>>,
-    content: Tree<PseudoNode>,
-    focus: NodeId,
+    content: Vec<Tree<PseudoNode>>,
+    focus: (usize, NodeId),
 }
 impl App {
     fn new() -> io::Result<Self> {
@@ -255,8 +274,28 @@ impl App {
         let stdout = AlternateScreen::from(stdout);
         let backend = TermionBackend::new(stdout);
         let terminal = Terminal::new(backend)?;
-        let content = json_to_tree(json!({"hello": "world", "array": [1, 2, 3]}));
-        let focus = content.root().id();
+        let content = jsons_to_trees(
+            vec![
+                json!({"hello": "world", "array": [1, 2, 3]}),
+                json!({"hello": "world", "array": [1, 2, 3]}),
+                json!({"hello": "world", "array": [1, 2, 3]}),
+                json!({"hello": "world", "array": [1, 2, 3]}),
+                json!({"hello": "world", "array": [1, 2, 3]}),
+                json!({"hello": "world", "array": [1, 2, 3]}),
+                json!({"hello": "world", "array": [1, 2, 3]}),
+                json!({"hello": "world", "array": [1, 2, 3]}),
+                json!({"hello": "world", "array": [1, 2, 3]}),
+                json!({"hello": "world", "array": [1, 2, 3]}),
+                json!({"hello": "world", "array": [1, 2, 3]}),
+                json!({"hello": "world", "array": [1, 2, 3]}),
+                json!({"hello": "world", "array": [1, 2, 3]}),
+                json!({"hello": "world", "array": [1, 2, 3]}),
+                json!({"hello": "world", "array": [1, 2, 3]}),
+                json!({"hello": "world", "array": [1, 2, 3]}),
+            ]
+            .into_iter(),
+        );
+        let focus = (0, content[0].root().id());
         Ok(App {
             terminal,
             content,
@@ -271,7 +310,13 @@ impl App {
         } = self;
         terminal.draw(|f| {
             let size = f.size();
-            let text: Vec<Spans> = json_to_text_2(0, content.root(), *focus)
+            let text: Vec<Spans> = content
+                .iter()
+                .enumerate()
+                .flat_map(|(i, tree)| {
+                    let node_focus = if i == focus.0 { Some(focus.1) } else { None };
+                    json_to_text_2(0, tree.root(), node_focus)
+                })
                 .map(Spans::from)
                 .collect();
             let block = Block::default().title("Block").borders(Borders::ALL);
