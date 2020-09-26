@@ -79,18 +79,27 @@ fn append_json_children(mut parent: NodeMut<PseudoNode>, v: Value) {
     };
 }
 
-fn prior_node<T>(n: NodeRef<T>) -> Option<NodeRef<T>> {
+fn prior_node(n: NodeRef<PseudoNode>) -> Option<NodeRef<PseudoNode>> {
     let sib = match n.prev_sibling() {
         None => return n.parent(),
         Some(n) => n,
     };
-    Some(sib.last_children().last().unwrap_or(sib))
+    let mut last = sib;
+    for n in once(sib).chain(sib.last_children()) {
+        if n.value().folded {
+            return Some(n);
+        }
+        last = n;
+    }
+    Some(last)
 }
 
-fn next_node<T>(n: NodeRef<T>) -> Option<NodeRef<T>> {
-    let child = n.first_child();
-    if child.is_some() {
-        return child;
+fn next_node(n: NodeRef<PseudoNode>) -> Option<NodeRef<PseudoNode>> {
+    if !n.value().folded {
+        let child = n.first_child();
+        if child.is_some() {
+            return child;
+        }
     }
     once(n)
         .chain(n.ancestors())
