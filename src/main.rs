@@ -3,13 +3,12 @@ use serde_json::json;
 use serde_json::value::{Number, Value};
 use std::io;
 use std::iter::once;
-use std::iter::Peekable;
 use termion::input::TermRead;
 use termion::raw::{IntoRawMode, RawTerminal};
 use termion::{event::Key, input::MouseTerminal, screen::AlternateScreen};
 use tui::backend::TermionBackend;
 use tui::layout::Alignment;
-use tui::style::{Color, Style};
+use tui::style::{Color, Modifier, Style};
 use tui::text::{Span, Spans};
 use tui::widgets::{Block, Borders, Paragraph, Wrap};
 use tui::Terminal;
@@ -146,56 +145,89 @@ fn json_to_text_2<'a>(
         None => vec![indent],
         Some(key) => vec![indent, Span::raw(format!("{:?}", key)), Span::raw(" : ")],
     };
+    let has_comma = v.next_sibling().is_some();
     match node {
         Node::Null => {
             prefix.push(Span::styled("null", style));
+            if has_comma {
+                prefix.push(Span::raw(","));
+            }
             Box::new(once(prefix))
         }
         Node::String(s) => {
             prefix.push(Span::styled(format!("{:?}", s), style));
+            if has_comma {
+                prefix.push(Span::raw(","));
+            }
             Box::new(once(prefix))
         }
         Node::Bool(b) => {
             prefix.push(Span::styled(b.to_string(), style));
+            if has_comma {
+                prefix.push(Span::raw(","));
+            }
             Box::new(once(prefix))
         }
         Node::Number(x) => {
             prefix.push(Span::styled(x.to_string(), style));
+            if has_comma {
+                prefix.push(Span::raw(","));
+            }
             Box::new(once(prefix))
         }
         Node::Array if v.value().folded => {
             prefix.push(Span::styled("[...]", style));
+            if has_comma {
+                prefix.push(Span::raw(","));
+            }
+            prefix.push(Span::styled(
+                format!(" ({} items)", v.children().count()),
+                Style::default().add_modifier(Modifier::DIM),
+            ));
             Box::new(once(prefix))
         }
         Node::Array => {
             prefix.push(Span::styled("[", style));
             let indent = Span::raw("  ".repeat(indent_n));
-            let close = once(vec![indent, Span::styled("]", style)]);
-            let values = zip_with_is_last(v.children()).flat_map(move |(v, is_last)| {
-                if is_last {
+            let mut close = vec![indent, Span::styled("]", style)];
+            if has_comma {
+                close.push(Span::raw(","));
+            }
+            let values = v.children().flat_map(move |v| {
+                if v.next_sibling().is_none() {
                     json_to_text_2(indent_n + 1, v, focus)
                 } else {
-                    Box::new(append_comma(json_to_text_2(indent_n + 1, v, focus)))
+                    Box::new(json_to_text_2(indent_n + 1, v, focus))
                 }
             });
-            Box::new(once(prefix).chain(values).chain(close))
+            Box::new(once(prefix).chain(values).chain(once(close)))
         }
         Node::Object if v.value().folded => {
             prefix.push(Span::styled("{...}", style));
+            if has_comma {
+                prefix.push(Span::raw(","));
+            }
+            prefix.push(Span::styled(
+                format!(" ({} items)", v.children().count()),
+                Style::default().add_modifier(Modifier::DIM),
+            ));
             Box::new(once(prefix))
         }
         Node::Object => {
             prefix.push(Span::styled("{", style));
             let indent = Span::raw("  ".repeat(indent_n));
-            let close = once(vec![indent, Span::styled("}", style)]);
-            let values = zip_with_is_last(v.children()).flat_map(move |(v, is_last)| {
-                if is_last {
+            let mut close = vec![indent, Span::styled("}", style)];
+            if has_comma {
+                close.push(Span::raw(","));
+            }
+            let values = v.children().flat_map(move |v| {
+                if v.next_sibling().is_none() {
                     json_to_text_2(indent_n + 1, v, focus)
                 } else {
-                    Box::new(append_comma(json_to_text_2(indent_n + 1, v, focus)))
+                    Box::new(json_to_text_2(indent_n + 1, v, focus))
                 }
             });
-            Box::new(once(prefix).chain(values).chain(close))
+            Box::new(once(prefix).chain(values).chain(once(close)))
         }
     }
 }
@@ -241,47 +273,5 @@ impl App {
                 .wrap(Wrap { trim: false });
             f.render_widget(paragraph, size);
         })
-    }
-}
-
-fn append_comma<'a, I>(iter: I) -> impl Iterator<Item = Vec<Span<'a>>>
-where
-    I: Iterator<Item = Vec<Span<'a>>>,
-{
-    zip_with_is_last(iter).map(|(mut line, is_last)| {
-        if is_last {
-            line.push(Span::raw(","));
-            line
-        } else {
-            line
-        }
-    })
-}
-
-fn zip_with_is_last<T, I>(iter: I) -> ZipWithIsLast<T, I>
-where
-    I: Iterator<Item = T>,
-{
-    ZipWithIsLast {
-        iter: iter.peekable(),
-    }
-}
-
-struct ZipWithIsLast<T, I>
-where
-    I: Iterator<Item = T>,
-{
-    iter: Peekable<I>,
-}
-
-impl<T, I> Iterator for ZipWithIsLast<T, I>
-where
-    I: Iterator<Item = T>,
-{
-    type Item = (T, bool);
-    fn next(&mut self) -> Option<(T, bool)> {
-        self.iter
-            .next()
-            .map(|next| (next, self.iter.peek().is_none()))
     }
 }
