@@ -125,6 +125,11 @@ fn main() -> Result<(), io::Error> {
                     app.focus = prior.id();
                 }
             }
+            Key::Char('z') => {
+                let mut focus = app.content.get_mut(app.focus).expect("Invalid focus");
+                let node = focus.value();
+                node.folded = !node.folded;
+            }
             _ => {}
         }
         app.render()?;
@@ -165,6 +170,10 @@ fn json_to_text_2<'a>(
             prefix.push(Span::styled(x.to_string(), style));
             Box::new(once(prefix))
         }
+        Node::Array if v.value().folded => {
+            prefix.push(Span::styled("[...]", style));
+            Box::new(once(prefix))
+        }
         Node::Array => {
             prefix.push(Span::styled("[", style));
             let indent = Span::raw("  ".repeat(indent_n));
@@ -177,6 +186,10 @@ fn json_to_text_2<'a>(
                 }
             });
             Box::new(once(prefix).chain(values).chain(close))
+        }
+        Node::Object if v.value().folded => {
+            prefix.push(Span::styled("{...}", style));
+            Box::new(once(prefix))
         }
         Node::Object => {
             prefix.push(Span::styled("{", style));
