@@ -1,7 +1,6 @@
 use ego_tree::{NodeId, NodeMut, NodeRef, Tree};
 use serde_json::json;
-use serde_json::value::{Map, Number, Value};
-use std::collections::HashMap;
+use serde_json::value::{Number, Value};
 use std::io;
 use std::iter::once;
 use std::iter::Peekable;
@@ -10,10 +9,9 @@ use termion::raw::{IntoRawMode, RawTerminal};
 use termion::{event::Key, input::MouseTerminal, screen::AlternateScreen};
 use tui::backend::TermionBackend;
 use tui::layout::Alignment;
-use tui::layout::{Constraint, Direction, Layout};
-use tui::style::{Color, Modifier, Style};
+use tui::style::{Color, Style};
 use tui::text::{Span, Spans};
-use tui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
+use tui::widgets::{Block, Borders, Paragraph, Wrap};
 use tui::Terminal;
 
 #[derive(Debug)]
@@ -49,8 +47,8 @@ fn json_to_node(v: &Value) -> Node {
         Value::Bool(b) => Node::Bool(*b),
         Value::Number(x) => Node::Number(x.clone()),
         Value::String(s) => Node::String(s.clone()),
-        Value::Array(arr) => Node::Array,
-        Value::Object(obj) => Node::Object,
+        Value::Array(_) => Node::Array,
+        Value::Object(_) => Node::Object,
     }
 }
 
@@ -83,7 +81,7 @@ fn append_json_children(mut parent: NodeMut<PseudoNode>, v: Value) {
 }
 
 fn prior_node<T>(n: NodeRef<T>) -> Option<NodeRef<T>> {
-    let mut sib = match n.prev_sibling() {
+    let sib = match n.prev_sibling() {
         None => return n.parent(),
         Some(n) => n,
     };
@@ -95,15 +93,10 @@ fn next_node<T>(n: NodeRef<T>) -> Option<NodeRef<T>> {
     if child.is_some() {
         return child;
     }
-    let mut n_option = Some(n);
-    while let Some(n) = n_option {
-        let sibling = n.next_sibling();
-        if sibling.is_some() {
-            return sibling;
-        }
-        n_option = n.parent();
-    }
-    None
+    once(n)
+        .chain(n.ancestors())
+        .filter_map(|n| n.next_sibling())
+        .next()
 }
 
 fn main() -> Result<(), io::Error> {
@@ -221,7 +214,7 @@ impl App {
         let stdout = AlternateScreen::from(stdout);
         let backend = TermionBackend::new(stdout);
         let terminal = Terminal::new(backend)?;
-        let mut content = json_to_tree(json!({"hello": "world", "array": [1, 2, 3]}));
+        let content = json_to_tree(json!({"hello": "world", "array": [1, 2, 3]}));
         let focus = content.root().id();
         Ok(App {
             terminal,
@@ -263,37 +256,6 @@ where
             line
         }
     })
-}
-
-fn map_first<T, I, F>(iter: I, f: F) -> MapFirst<T, I, F>
-where
-    I: Iterator<Item = T>,
-    F: FnOnce(T) -> T,
-{
-    MapFirst { iter, f: Some(f) }
-}
-
-struct MapFirst<T, I, F>
-where
-    I: Iterator<Item = T>,
-    F: FnOnce(T) -> T,
-{
-    f: Option<F>,
-    iter: I,
-}
-
-impl<T, I, F> Iterator for MapFirst<T, I, F>
-where
-    I: Iterator<Item = T>,
-    F: FnOnce(T) -> T,
-{
-    type Item = T;
-    fn next(&mut self) -> Option<T> {
-        match self.f.take() {
-            None => self.iter.next(),
-            Some(f) => self.iter.next().map(f),
-        }
-    }
 }
 
 fn zip_with_is_last<T, I>(iter: I) -> ZipWithIsLast<T, I>
