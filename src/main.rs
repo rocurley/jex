@@ -16,25 +16,11 @@ use tui::text::{Span, Spans};
 use tui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 use tui::Terminal;
 
-struct RenderedNode {
-    folded: bool,
-    focused: bool,
-    content: Content,
-}
-
-enum Content {
-    Null,
-    Bool(bool),
-    Number(Number),
-    String(String),
-    Array(Vec<RenderedNode>),
-    Object(HashMap<String, RenderedNode>),
-}
-
 #[derive(Debug)]
 struct PseudoNode {
     node: Node,
     key: Option<String>,
+    folded: bool,
 }
 
 #[derive(Debug)]
@@ -47,32 +33,11 @@ enum Node {
     Object,
 }
 
-impl From<Value> for RenderedNode {
-    fn from(v: Value) -> RenderedNode {
-        let content = match v {
-            Value::Null => Content::Null,
-            Value::Bool(b) => Content::Bool(b),
-            Value::Number(x) => Content::Number(x),
-            Value::String(s) => Content::String(s),
-            Value::Array(arr) => Content::Array(arr.into_iter().map(Value::into).collect()),
-            Value::Object(obj) => Content::Object(
-                obj.into_iter()
-                    .map(|(k, v)| (k, RenderedNode::from(v)))
-                    .collect(),
-            ),
-        };
-        RenderedNode {
-            folded: false,
-            focused: false,
-            content,
-        }
-    }
-}
-
 fn json_to_tree(v: Value) -> Tree<PseudoNode> {
     let mut tree = Tree::new(PseudoNode {
         node: json_to_node(&v),
         key: None,
+        folded: false,
     });
     append_json_children(tree.root_mut(), v);
     tree
@@ -97,6 +62,7 @@ fn append_json_children(mut parent: NodeMut<PseudoNode>, v: Value) {
                 let child = parent.append(PseudoNode {
                     node: child_node,
                     key: None,
+                    folded: false,
                 });
                 append_json_children(child, x);
             }
@@ -107,6 +73,7 @@ fn append_json_children(mut parent: NodeMut<PseudoNode>, v: Value) {
                 let child = parent.append(PseudoNode {
                     key: Some(k),
                     node: child_node,
+                    folded: false,
                 });
                 append_json_children(child, x);
             }
@@ -116,7 +83,11 @@ fn append_json_children(mut parent: NodeMut<PseudoNode>, v: Value) {
 }
 
 fn prior_node<T>(n: NodeRef<T>) -> Option<NodeRef<T>> {
-    n.prev_sibling().or_else(|| n.parent())
+    let mut sib = match n.prev_sibling() {
+        None => return n.parent(),
+        Some(n) => n,
+    };
+    Some(sib.last_children().last().unwrap_or(sib))
 }
 
 fn next_node<T>(n: NodeRef<T>) -> Option<NodeRef<T>> {
@@ -146,8 +117,12 @@ fn main() -> Result<(), io::Error> {
                 let focus = app.content.get(app.focus).expect("Invalid focus");
                 if let Some(next) = next_node(focus) {
                     app.focus = next.id();
-                } else {
-                    println!("No next!");
+                }
+            }
+            Key::Up => {
+                let focus = app.content.get(app.focus).expect("Invalid focus");
+                if let Some(prior) = prior_node(focus) {
+                    app.focus = prior.id();
                 }
             }
             _ => {}
@@ -168,7 +143,6 @@ fn json_to_text_2<'a>(
     } else {
         Style::default()
     };
-    dbg!(v, style);
     let node = &v.value().node;
     let mut prefix = match &v.value().key {
         None => vec![indent],
@@ -220,55 +194,6 @@ fn json_to_text_2<'a>(
     }
 }
 
-fn json_to_text<'a>(
-    indent_n: usize,
-    v: &'a RenderedNode,
-) -> Box<dyn Iterator<Item = Vec<Span>> + 'a> {
-    let indent = Span::raw("  ".repeat(indent_n));
-    let style = if v.focused {
-        Style::default().bg(Color::Blue)
-    } else {
-        Style::default()
-    };
-    match &v.content {
-        Content::Null => Box::new(once(vec![indent, Span::styled("null", style)])),
-        Content::String(s) => Box::new(once(vec![indent, Span::styled(format!("{:?}", s), style)])),
-        Content::Bool(b) => Box::new(once(vec![indent, Span::styled(b.to_string(), style)])),
-        Content::Number(x) => Box::new(once(vec![indent, Span::styled(x.to_string(), style)])),
-        Content::Array(arr) => {
-            let open = once(vec![indent.clone(), Span::styled("[", style)]);
-            let close = once(vec![indent, Span::styled("]", style)]);
-            let values = zip_with_is_last(arr.iter()).flat_map(move |(v, is_last)| {
-                if is_last {
-                    json_to_text(indent_n + 1, v)
-                } else {
-                    Box::new(append_comma(json_to_text(indent_n + 1, v)))
-                }
-            });
-            Box::new(open.chain(values).chain(close))
-        }
-        Content::Object(obj) => {
-            let open = once(vec![indent.clone(), Span::styled("{", style)]);
-            let close = once(vec![indent, Span::styled("}", style)]);
-            let values_no_commas = obj.iter().map(move |(k, v)| {
-                map_first(json_to_text(indent_n + 1, v), move |mut spans| {
-                    spans.insert(1, Span::raw(format!("{:?}", k)));
-                    spans.insert(2, Span::raw(" : "));
-                    spans
-                })
-            });
-            let values = zip_with_is_last(values_no_commas).flat_map(move |(v, is_last)| {
-                if is_last {
-                    Box::new(v) as Box<dyn Iterator<Item = _>>
-                } else {
-                    Box::new(append_comma(v))
-                }
-            });
-            Box::new(open.chain(values).chain(close))
-        }
-    }
-}
-
 type Screen = AlternateScreen<MouseTerminal<RawTerminal<io::Stdout>>>;
 
 struct App {
@@ -293,11 +218,13 @@ impl App {
     }
     fn render(&mut self) -> io::Result<()> {
         let App {
-            terminal, content, ..
+            terminal,
+            content,
+            focus,
         } = self;
         terminal.draw(|f| {
             let size = f.size();
-            let text: Vec<Spans> = json_to_text_2(0, content.root(), content.root().id())
+            let text: Vec<Spans> = json_to_text_2(0, content.root(), *focus)
                 .map(Spans::from)
                 .collect();
             let block = Block::default().title("Block").borders(Borders::ALL);
