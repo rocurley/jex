@@ -7,7 +7,7 @@ use termion::input::TermRead;
 use termion::raw::{IntoRawMode, RawTerminal};
 use termion::{event::Key, input::MouseTerminal, screen::AlternateScreen};
 use tui::backend::TermionBackend;
-use tui::layout::Alignment;
+use tui::layout::{Alignment, Constraint, Direction, Layout};
 use tui::style::{Color, Modifier, Style};
 use tui::text::{Span, Spans};
 use tui::widgets::{Block, Borders, Paragraph, Wrap};
@@ -115,40 +115,49 @@ fn main() -> Result<(), io::Error> {
     let mut app = App::new()?;
     app.render()?;
     for c in stdin.keys() {
+        let view = &mut app.left;
         match c? {
             Key::Esc => break,
             Key::Down => {
-                let focus_node = app.content[app.focus.0]
-                    .get(app.focus.1)
-                    .expect("Invalid focus");
-                match next_node(focus_node) {
-                    Some(next) => app.focus.1 = next.id(),
-                    None if app.focus.0 + 1 == app.content.len() => {}
-                    None => {
-                        app.focus = (app.focus.0 + 1, app.content[app.focus.0 + 1].root().id());
+                if let Some(focus) = view.focus.as_mut() {
+                    let focus_node = view.content[focus.0].get(focus.1).expect("Invalid focus");
+                    match next_node(focus_node) {
+                        Some(next) => focus.1 = next.id(),
+                        None if focus.0 + 1 == view.content.len() => {}
+                        None => {
+                            *focus = (focus.0 + 1, view.content[focus.0 + 1].root().id());
+                        }
                     }
                 }
             }
             Key::Up => {
-                let focus_node = app.content[app.focus.0]
-                    .get(app.focus.1)
-                    .expect("Invalid focus");
-                match prior_node(focus_node) {
-                    Some(prior) => app.focus.1 = prior.id(),
-                    None if app.focus.0 == 0 => {}
-                    None => {
-                        let root = app.content[app.focus.0 - 1].root();
-                        let focus_node = root.last_children().last().unwrap_or(root);
-                        app.focus = (app.focus.0 - 1, focus_node.id());
+                if let Some(focus) = view.focus.as_mut() {
+                    let focus_node = view.content[focus.0].get(focus.1).expect("Invalid focus");
+                    match prior_node(focus_node) {
+                        Some(prior) => focus.1 = prior.id(),
+                        None if focus.0 == 0 => {}
+                        None => {
+                            let root = view.content[focus.0 - 1].root();
+                            let focus_node = root.last_children().last().unwrap_or(root);
+                            *focus = (focus.0 - 1, focus_node.id());
+                        }
                     }
                 }
             }
+            Key::Char('j') => {
+                view.scroll += 1;
+            }
+            Key::Char('k') => {
+                view.scroll = view.scroll.saturating_sub(1);
+            }
             Key::Char('z') => {
-                let mut focus_node = app.content[app.focus.0]
-                    .get_mut(app.focus.1)
-                    .expect("Invalid focus");
-                let node = focus_node.value();
-                node.folded = !node.folded;
+                if let Some(focus) = view.focus {
+                    let mut focus_node = view.content[focus.0]
+                        .get_mut(focus.1)
+                        .expect("Invalid focus");
+                    let node = focus_node.value();
+                    node.folded = !node.folded;
+                }
             }
             _ => {}
         }
@@ -256,9 +265,41 @@ type Screen = AlternateScreen<MouseTerminal<RawTerminal<io::Stdout>>>;
 
 struct App {
     terminal: Terminal<TermionBackend<Screen>>,
-    content: Vec<Tree<PseudoNode>>,
-    focus: (usize, NodeId),
+    left: View,
+    right: View,
 }
+
+struct View {
+    scroll: u16,
+    content: Vec<Tree<PseudoNode>>,
+    focus: Option<(usize, NodeId)>,
+}
+
+impl View {
+    fn render(&self) -> Paragraph {
+        let View {
+            content,
+            focus,
+            scroll,
+        } = self;
+        let text: Vec<Spans> = content
+            .iter()
+            .enumerate()
+            .flat_map(|(i, tree)| {
+                let node_focus =
+                    focus.and_then(|(idx, node)| if i == idx { Some(node) } else { None });
+                json_to_text(0, tree.root(), node_focus)
+            })
+            .map(Spans::from)
+            .collect();
+        Paragraph::new(text)
+            .style(Style::default().fg(Color::White).bg(Color::Black))
+            .alignment(Alignment::Left)
+            .scroll((*scroll, 0))
+            .wrap(Wrap { trim: false })
+    }
+}
+
 impl App {
     fn new() -> io::Result<Self> {
         let stdout = io::stdout().into_raw_mode()?;
@@ -287,37 +328,39 @@ impl App {
             ]
             .into_iter(),
         );
-        let focus = (0, content[0].root().id());
+        let focus = Some((0, content[0].root().id()));
         Ok(App {
             terminal,
-            content,
-            focus,
+            left: View {
+                content,
+                focus,
+                scroll: 0,
+            },
+            right: View {
+                content: Vec::new(),
+                focus: None,
+                scroll: 0,
+            },
         })
     }
     fn render(&mut self) -> io::Result<()> {
         let App {
             terminal,
-            content,
-            focus,
+            left,
+            right,
         } = self;
         terminal.draw(|f| {
             let size = f.size();
-            let text: Vec<Spans> = content
-                .iter()
-                .enumerate()
-                .flat_map(|(i, tree)| {
-                    let node_focus = if i == focus.0 { Some(focus.1) } else { None };
-                    json_to_text(0, tree.root(), node_focus)
-                })
-                .map(Spans::from)
-                .collect();
-            let block = Block::default().title("Block").borders(Borders::ALL);
-            let paragraph = Paragraph::new(text)
-                .block(block)
-                .style(Style::default().fg(Color::White).bg(Color::Black))
-                .alignment(Alignment::Left)
-                .wrap(Wrap { trim: false });
-            f.render_widget(paragraph, size);
+            let chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)].as_ref())
+                .split(size);
+            let left_block = Block::default().title("Left").borders(Borders::ALL);
+            let left_paragraph = left.render().block(left_block);
+            f.render_widget(left_paragraph, chunks[0]);
+            let right_block = Block::default().title("Right").borders(Borders::ALL);
+            let right_paragraph = right.render().block(right_block);
+            f.render_widget(right_paragraph, chunks[1]);
         })
     }
 }
