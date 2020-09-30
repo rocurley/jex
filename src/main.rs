@@ -1,6 +1,7 @@
 use ego_tree::{NodeId, NodeMut, NodeRef, Tree};
-use serde_json::json;
+use jq_rs;
 use serde_json::value::{Number, Value};
+use serde_json::{json, Deserializer};
 use std::io;
 use std::iter::once;
 use termion::input::TermRead;
@@ -30,7 +31,7 @@ enum Node {
     Object,
 }
 
-fn jsons_to_trees<I: Iterator<Item = Value>>(vs: I) -> Vec<Tree<PseudoNode>> {
+fn jsons_to_trees<'a, I: Iterator<Item = &'a Value>>(vs: I) -> Vec<Tree<PseudoNode>> {
     vs.map(|v| {
         let mut tree = Tree::new(PseudoNode {
             node: json_to_node(&v),
@@ -54,7 +55,7 @@ fn json_to_node(v: &Value) -> Node {
     }
 }
 
-fn append_json_children(mut parent: NodeMut<PseudoNode>, v: Value) {
+fn append_json_children(mut parent: NodeMut<PseudoNode>, v: &Value) {
     match v {
         Value::Array(arr) => {
             for x in arr {
@@ -71,7 +72,7 @@ fn append_json_children(mut parent: NodeMut<PseudoNode>, v: Value) {
             for (k, x) in obj {
                 let child_node = json_to_node(&x);
                 let child = parent.append(PseudoNode {
-                    key: Some(k),
+                    key: Some(k.clone()),
                     node: child_node,
                     folded: false,
                 });
@@ -307,37 +308,47 @@ impl App {
         let stdout = AlternateScreen::from(stdout);
         let backend = TermionBackend::new(stdout);
         let terminal = Terminal::new(backend)?;
-        let content = jsons_to_trees(
-            vec![
-                json!({"hello": "world", "array": [1, 2, 3]}),
-                json!({"hello": "world", "array": [1, 2, 3]}),
-                json!({"hello": "world", "array": [1, 2, 3]}),
-                json!({"hello": "world", "array": [1, 2, 3]}),
-                json!({"hello": "world", "array": [1, 2, 3]}),
-                json!({"hello": "world", "array": [1, 2, 3]}),
-                json!({"hello": "world", "array": [1, 2, 3]}),
-                json!({"hello": "world", "array": [1, 2, 3]}),
-                json!({"hello": "world", "array": [1, 2, 3]}),
-                json!({"hello": "world", "array": [1, 2, 3]}),
-                json!({"hello": "world", "array": [1, 2, 3]}),
-                json!({"hello": "world", "array": [1, 2, 3]}),
-                json!({"hello": "world", "array": [1, 2, 3]}),
-                json!({"hello": "world", "array": [1, 2, 3]}),
-                json!({"hello": "world", "array": [1, 2, 3]}),
-                json!({"hello": "world", "array": [1, 2, 3]}),
-            ]
-            .into_iter(),
-        );
-        let focus = Some((0, content[0].root().id()));
+        let content = vec![
+            json!({"hello": "world", "array": [1, 2, 3]}),
+            json!({"hello": "world", "array": [1, 2, 3]}),
+            json!({"hello": "world", "array": [1, 2, 3]}),
+            json!({"hello": "world", "array": [1, 2, 3]}),
+            json!({"hello": "world", "array": [1, 2, 3]}),
+            json!({"hello": "world", "array": [1, 2, 3]}),
+            json!({"hello": "world", "array": [1, 2, 3]}),
+            json!({"hello": "world", "array": [1, 2, 3]}),
+            json!({"hello": "world", "array": [1, 2, 3]}),
+            json!({"hello": "world", "array": [1, 2, 3]}),
+            json!({"hello": "world", "array": [1, 2, 3]}),
+            json!({"hello": "world", "array": [1, 2, 3]}),
+            json!({"hello": "world", "array": [1, 2, 3]}),
+            json!({"hello": "world", "array": [1, 2, 3]}),
+            json!({"hello": "world", "array": [1, 2, 3]}),
+            json!({"hello": "world", "array": [1, 2, 3]}),
+        ];
+        let content_tree = jsons_to_trees(content.iter());
+        let query = ".array | .[]";
+        let mut prog = jq_rs::compile(query).expect("jq compilation error");
+        let right_strings: Vec<String> = content
+            .iter()
+            .map(|j| prog.run(&j.to_string()).expect("jq execution error"))
+            .collect();
+        let right_content: Result<Vec<Value>, _> = right_strings
+            .iter()
+            .flat_map(|j| Deserializer::from_str(j).into_iter::<Value>())
+            .collect();
+        let right_content = right_content.expect("json decoding error");
+        let right_content_tree = jsons_to_trees(right_content.iter());
+        let focus = Some((0, content_tree[0].root().id()));
         Ok(App {
             terminal,
             left: View {
-                content,
+                content: content_tree,
                 focus,
                 scroll: 0,
             },
             right: View {
-                content: Vec::new(),
+                content: right_content_tree,
                 focus: None,
                 scroll: 0,
             },
@@ -363,4 +374,9 @@ impl App {
             f.render_widget(right_paragraph, chunks[1]);
         })
     }
+}
+
+fn json_strings(jsons: &[Value]) -> String {
+    let strings: Vec<String> = jsons.iter().map(|j| j.to_string()).collect();
+    strings.join("\n")
 }
