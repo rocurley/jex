@@ -267,21 +267,34 @@ type Screen = AlternateScreen<MouseTerminal<RawTerminal<io::Stdout>>>;
 struct App {
     terminal: Terminal<TermionBackend<Screen>>,
     left: View,
-    right: View,
+    right: Option<View>,
+    //program_text: String,
 }
 
 struct View {
     scroll: u16,
+    values: Vec<Value>,
     content: Vec<Tree<PseudoNode>>,
     focus: Option<(usize, NodeId)>,
 }
 
 impl View {
+    fn new(values: Vec<Value>) -> Self {
+        let content = jsons_to_trees(values.iter());
+        let focus = content.get(0).map(|tree| (0, tree.root().id()));
+        View {
+            scroll: 0,
+            values,
+            content,
+            focus,
+        }
+    }
     fn render(&self) -> Paragraph {
         let View {
             content,
             focus,
             scroll,
+            ..
         } = self;
         let text: Vec<Spans> = content
             .iter()
@@ -298,6 +311,20 @@ impl View {
             .alignment(Alignment::Left)
             .scroll((*scroll, 0))
             .wrap(Wrap { trim: false })
+    }
+    fn apply_query(&self, query: &str) -> Self {
+        let mut prog = jq_rs::compile(query).expect("jq compilation error");
+        let right_strings: Vec<String> = self
+            .values
+            .iter()
+            .map(|j| prog.run(&j.to_string()).expect("jq execution error"))
+            .collect();
+        let right_content: Result<Vec<Value>, _> = right_strings
+            .iter()
+            .flat_map(|j| Deserializer::from_str(j).into_iter::<Value>())
+            .collect();
+        let values = right_content.expect("json decoding error");
+        View::new(values)
     }
 }
 
@@ -326,32 +353,11 @@ impl App {
             json!({"hello": "world", "array": [1, 2, 3]}),
             json!({"hello": "world", "array": [1, 2, 3]}),
         ];
-        let content_tree = jsons_to_trees(content.iter());
-        let query = ".array | .[]";
-        let mut prog = jq_rs::compile(query).expect("jq compilation error");
-        let right_strings: Vec<String> = content
-            .iter()
-            .map(|j| prog.run(&j.to_string()).expect("jq execution error"))
-            .collect();
-        let right_content: Result<Vec<Value>, _> = right_strings
-            .iter()
-            .flat_map(|j| Deserializer::from_str(j).into_iter::<Value>())
-            .collect();
-        let right_content = right_content.expect("json decoding error");
-        let right_content_tree = jsons_to_trees(right_content.iter());
-        let focus = Some((0, content_tree[0].root().id()));
+        let left = View::new(content);
         Ok(App {
             terminal,
-            left: View {
-                content: content_tree,
-                focus,
-                scroll: 0,
-            },
-            right: View {
-                content: right_content_tree,
-                focus: None,
-                scroll: 0,
-            },
+            left,
+            right: None,
         })
     }
     fn render(&mut self) -> io::Result<()> {
@@ -370,8 +376,13 @@ impl App {
             let left_paragraph = left.render().block(left_block);
             f.render_widget(left_paragraph, chunks[0]);
             let right_block = Block::default().title("Right").borders(Borders::ALL);
-            let right_paragraph = right.render().block(right_block);
-            f.render_widget(right_paragraph, chunks[1]);
+            match right {
+                Some(right) => {
+                    let right_paragraph = right.render().block(right_block);
+                    f.render_widget(right_paragraph, chunks[1]);
+                }
+                None => f.render_widget(right_block, chunks[1]),
+            }
         })
     }
 }
