@@ -115,7 +115,8 @@ fn main() -> Result<(), io::Error> {
     let stdin = io::stdin();
     let mut app = App::new()?;
     app.render()?;
-    for c in stdin.keys() {
+    let mut keys = stdin.keys();
+    while let Some(c) = keys.next() {
         let view = &mut app.left;
         match c? {
             Key::Esc => break,
@@ -158,6 +159,30 @@ fn main() -> Result<(), io::Error> {
                         .expect("Invalid focus");
                     let node = focus_node.value();
                     node.folded = !node.folded;
+                }
+            }
+            Key::Char('q') => {
+                app.new_query = Some(app.query.clone());
+                app.render()?;
+                while let Some(key) = keys.next() {
+                    let new_query = app.new_query.as_mut().unwrap();
+                    match key? {
+                        Key::Esc => break,
+                        Key::Char('\n') => {
+                            app.query = app.new_query.take().unwrap();
+                            app.recompute_right();
+                            break;
+                        }
+                        Key::Backspace => {
+                            new_query.pop();
+                            app.render()?;
+                        }
+                        Key::Char(c) => {
+                            new_query.push(c);
+                            app.render()?;
+                        }
+                        _ => {}
+                    }
                 }
             }
             _ => {}
@@ -268,7 +293,8 @@ struct App {
     terminal: Terminal<TermionBackend<Screen>>,
     left: View,
     right: Option<View>,
-    //program_text: String,
+    new_query: Option<String>,
+    query: String,
 }
 
 struct View {
@@ -354,24 +380,38 @@ impl App {
             json!({"hello": "world", "array": [1, 2, 3]}),
         ];
         let left = View::new(content);
-        Ok(App {
+        let mut app = App {
             terminal,
             left,
             right: None,
-        })
+            new_query: None,
+            query: String::new(),
+        };
+        app.recompute_right();
+        Ok(app)
+    }
+    fn recompute_right(&mut self) {
+        self.right = Some(self.left.apply_query(&self.query));
     }
     fn render(&mut self) -> io::Result<()> {
         let App {
             terminal,
             left,
             right,
+            query,
+            new_query,
+            ..
         } = self;
         terminal.draw(|f| {
             let size = f.size();
+            let vchunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(0), Constraint::Length(1)].as_ref())
+                .split(size);
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)].as_ref())
-                .split(size);
+                .split(vchunks[0]);
             let left_block = Block::default().title("Left").borders(Borders::ALL);
             let left_paragraph = left.render().block(left_block);
             f.render_widget(left_paragraph, chunks[0]);
@@ -383,11 +423,13 @@ impl App {
                 }
                 None => f.render_widget(right_block, chunks[1]),
             }
+            let query = Paragraph::new(new_query.as_ref().unwrap_or(query).as_str())
+                .alignment(Alignment::Left)
+                .wrap(Wrap { trim: false });
+            if let Some(query) = new_query.as_ref() {
+                f.set_cursor(query.len() as u16, vchunks[1].y);
+            }
+            f.render_widget(query, vchunks[1]);
         })
     }
-}
-
-fn json_strings(jsons: &[Value]) -> String {
-    let strings: Vec<String> = jsons.iter().map(|j| j.to_string()).collect();
-    strings.join("\n")
 }
