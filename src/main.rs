@@ -15,7 +15,6 @@ use tui::widgets::{Block, Borders, Paragraph, Wrap};
 use tui::Terminal;
 // TODO
 // * Read from files
-// * Proptest tests for prior/next node
 // * Arrow key + emacs shortcuts for the query editor
 // * Make scrolling suck less
 // * Edit tree, instead of 2 fixed panels
