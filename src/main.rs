@@ -1,6 +1,6 @@
-use ego_tree::{NodeId, NodeMut, NodeRef, Tree};
+use ego_tree::{NodeId, NodeRef, Tree};
 use jq_rs;
-use serde_json::value::{Number, Value};
+use serde_json::value::Value;
 use serde_json::{json, Deserializer};
 use std::io;
 use std::iter::once;
@@ -13,104 +13,16 @@ use tui::style::{Color, Modifier, Style};
 use tui::text::{Span, Spans};
 use tui::widgets::{Block, Borders, Paragraph, Wrap};
 use tui::Terminal;
-
-#[derive(Debug)]
-struct PseudoNode {
-    node: Node,
-    key: Option<String>,
-    folded: bool,
-}
-
-#[derive(Debug)]
-enum Node {
-    Null,
-    Bool(bool),
-    Number(Number),
-    String(String),
-    Array,
-    Object,
-}
-
-fn jsons_to_trees<'a, I: Iterator<Item = &'a Value>>(vs: I) -> Vec<Tree<PseudoNode>> {
-    vs.map(|v| {
-        let mut tree = Tree::new(PseudoNode {
-            node: json_to_node(&v),
-            key: None,
-            folded: false,
-        });
-        append_json_children(tree.root_mut(), v);
-        tree
-    })
-    .collect()
-}
-
-fn json_to_node(v: &Value) -> Node {
-    match v {
-        Value::Null => Node::Null,
-        Value::Bool(b) => Node::Bool(*b),
-        Value::Number(x) => Node::Number(x.clone()),
-        Value::String(s) => Node::String(s.clone()),
-        Value::Array(_) => Node::Array,
-        Value::Object(_) => Node::Object,
-    }
-}
-
-fn append_json_children(mut parent: NodeMut<PseudoNode>, v: &Value) {
-    match v {
-        Value::Array(arr) => {
-            for x in arr {
-                let child_node = json_to_node(&x);
-                let child = parent.append(PseudoNode {
-                    node: child_node,
-                    key: None,
-                    folded: false,
-                });
-                append_json_children(child, x);
-            }
-        }
-        Value::Object(obj) => {
-            for (k, x) in obj {
-                let child_node = json_to_node(&x);
-                let child = parent.append(PseudoNode {
-                    key: Some(k.clone()),
-                    node: child_node,
-                    folded: false,
-                });
-                append_json_children(child, x);
-            }
-        }
-        _ => {}
-    };
-}
-
-fn prior_node(n: NodeRef<PseudoNode>) -> Option<NodeRef<PseudoNode>> {
-    let sib = match n.prev_sibling() {
-        None => return n.parent(),
-        Some(n) => n,
-    };
-    let mut last = sib;
-    for n in once(sib).chain(sib.last_children()) {
-        if n.value().folded {
-            return Some(n);
-        }
-        last = n;
-    }
-    Some(last)
-}
-
-fn next_node(n: NodeRef<PseudoNode>) -> Option<NodeRef<PseudoNode>> {
-    if !n.value().folded {
-        let child = n.first_child();
-        if child.is_some() {
-            return child;
-        }
-    }
-    once(n)
-        .chain(n.ancestors())
-        .filter_map(|n| n.next_sibling())
-        .next()
-}
-
+// TODO
+// * Read from files
+// * Proptest tests for prior/next node
+// * Arrow key + emacs shortcuts for the query editor
+// * Make scrolling suck less
+// * Edit tree, instead of 2 fixed panels
+// * Saving
+// * Modules
+mod tree;
+use tree::{jsons_to_trees, last_node, next_node, prior_node, Node, PseudoNode};
 fn main() -> Result<(), io::Error> {
     let stdin = io::stdin();
     let mut app = App::new()?;
@@ -139,8 +51,7 @@ fn main() -> Result<(), io::Error> {
                         Some(prior) => focus.1 = prior.id(),
                         None if focus.0 == 0 => {}
                         None => {
-                            let root = view.content[focus.0 - 1].root();
-                            let focus_node = root.last_children().last().unwrap_or(root);
+                            let focus_node = last_node(&view.content[focus.0 - 1]);
                             *focus = (focus.0 - 1, focus_node.id());
                         }
                     }
