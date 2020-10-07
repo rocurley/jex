@@ -2,6 +2,8 @@ use ego_tree::{NodeId, NodeRef, Tree};
 use jq_rs;
 use serde_json::value::Value;
 use serde_json::{json, Deserializer};
+use std::env;
+use std::fs;
 use std::io;
 use std::iter::once;
 use termion::input::TermRead;
@@ -14,7 +16,10 @@ use tui::text::{Span, Spans};
 use tui::widgets::{Block, Borders, Paragraph, Wrap};
 use tui::Terminal;
 // TODO
-// * Read from files
+// * Large file perf:
+//   * Parsing is a bit slow
+//   * Querying is slow
+//   * Rendering is intolerably slow
 // * Arrow key + emacs shortcuts for the query editor
 // * Make scrolling suck less
 // * Edit tree, instead of 2 fixed panels
@@ -23,8 +28,11 @@ use tui::Terminal;
 mod tree;
 use tree::{jsons_to_trees, last_node, next_node, prior_node, Node, PseudoNode};
 fn main() -> Result<(), io::Error> {
+    let args: Vec<String> = env::args().into_iter().collect();
     let stdin = io::stdin();
-    let mut app = App::new()?;
+    let f = fs::File::open(&args[1])?;
+    let r = io::BufReader::new(f);
+    let mut app = App::new(r)?;
     app.render()?;
     let mut keys = stdin.keys();
     while let Some(c) = keys.next() {
@@ -246,7 +254,7 @@ impl View {
             .style(Style::default().fg(Color::White).bg(Color::Black))
             .alignment(Alignment::Left)
             .scroll((*scroll, 0))
-            .wrap(Wrap { trim: false })
+        //.wrap(Wrap { trim: false })
     }
     fn apply_query(&self, query: &str) -> Self {
         let mut prog = jq_rs::compile(query).expect("jq compilation error");
@@ -265,30 +273,15 @@ impl View {
 }
 
 impl App {
-    fn new() -> io::Result<Self> {
+    fn new<R: io::Read>(r: R) -> io::Result<Self> {
+        let content: Vec<Value> = Deserializer::from_reader(r)
+            .into_iter::<Value>()
+            .collect::<Result<Vec<Value>, _>>()?;
         let stdout = io::stdout().into_raw_mode()?;
         let stdout = MouseTerminal::from(stdout);
         let stdout = AlternateScreen::from(stdout);
         let backend = TermionBackend::new(stdout);
         let terminal = Terminal::new(backend)?;
-        let content = vec![
-            json!({"hello": "world", "array": [1, 2, 3]}),
-            json!({"hello": "world", "array": [1, 2, 3]}),
-            json!({"hello": "world", "array": [1, 2, 3]}),
-            json!({"hello": "world", "array": [1, 2, 3]}),
-            json!({"hello": "world", "array": [1, 2, 3]}),
-            json!({"hello": "world", "array": [1, 2, 3]}),
-            json!({"hello": "world", "array": [1, 2, 3]}),
-            json!({"hello": "world", "array": [1, 2, 3]}),
-            json!({"hello": "world", "array": [1, 2, 3]}),
-            json!({"hello": "world", "array": [1, 2, 3]}),
-            json!({"hello": "world", "array": [1, 2, 3]}),
-            json!({"hello": "world", "array": [1, 2, 3]}),
-            json!({"hello": "world", "array": [1, 2, 3]}),
-            json!({"hello": "world", "array": [1, 2, 3]}),
-            json!({"hello": "world", "array": [1, 2, 3]}),
-            json!({"hello": "world", "array": [1, 2, 3]}),
-        ];
         let left = View::new(content);
         let mut app = App {
             terminal,
