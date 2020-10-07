@@ -1,20 +1,20 @@
 use ego_tree::{NodeId, NodeRef, Tree};
-use jq_rs;
-use serde_json::value::Value;
-use serde_json::{json, Deserializer};
-use std::env;
-use std::fs;
-use std::io;
-use std::iter::once;
-use termion::input::TermRead;
-use termion::raw::{IntoRawMode, RawTerminal};
-use termion::{event::Key, input::MouseTerminal, screen::AlternateScreen};
-use tui::backend::TermionBackend;
-use tui::layout::{Alignment, Constraint, Direction, Layout};
-use tui::style::{Color, Modifier, Style};
-use tui::text::{Span, Spans};
-use tui::widgets::{Block, Borders, Paragraph, Wrap};
-use tui::Terminal;
+use serde_json::{value::Value, Deserializer};
+use std::{env, fs, io, iter::once};
+use termion::{
+    event::Key,
+    input::{MouseTerminal, TermRead},
+    raw::{IntoRawMode, RawTerminal},
+    screen::AlternateScreen,
+};
+use tui::{
+    backend::TermionBackend,
+    layout::{Alignment, Constraint, Direction, Layout},
+    style::{Color, Modifier, Style},
+    text::{Span, Spans},
+    widgets::{Block, Borders, Paragraph, Wrap},
+    Terminal,
+};
 // TODO
 // * Large file perf:
 //   * Parsing is a bit slow
@@ -28,7 +28,7 @@ use tui::Terminal;
 mod tree;
 use tree::{jsons_to_trees, last_node, next_node, prior_node, Node, PseudoNode};
 fn main() -> Result<(), io::Error> {
-    let args: Vec<String> = env::args().into_iter().collect();
+    let args: Vec<String> = env::args().collect();
     let stdin = io::stdin();
     let f = fs::File::open(&args[1])?;
     let r = io::BufReader::new(f);
@@ -82,6 +82,7 @@ fn main() -> Result<(), io::Error> {
             Key::Char('q') => {
                 app.new_query = Some(app.query.clone());
                 app.render()?;
+                #[allow(clippy::while_let_on_iterator)]
                 while let Some(key) = keys.next() {
                     let new_query = app.new_query.as_mut().unwrap();
                     match key? {

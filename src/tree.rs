@@ -1,6 +1,5 @@
 use ego_tree::{NodeMut, NodeRef, Tree};
-use serde_json::value::Number;
-use serde_json::value::Value;
+use serde_json::value::{Number, Value};
 use std::iter::once;
 
 #[derive(Debug, Clone)]
@@ -116,8 +115,7 @@ pub fn last_node(tree: &Tree<PseudoNode>) -> NodeRef<PseudoNode> {
 mod tests {
     use super::{jsons_to_trees, last_node, next_node, prior_node, PseudoNode};
     use ego_tree::{iter::Edge, Tree};
-    use proptest::collection;
-    use proptest::{prelude::*, proptest};
+    use proptest::{collection, prelude::*, proptest};
     use serde_json::value::Value;
     use std::iter::once;
     fn arb_json() -> impl Strategy<Value = Value> {
