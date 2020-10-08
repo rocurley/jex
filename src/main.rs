@@ -33,6 +33,7 @@ use tui::{
 // * Edit tree, instead of 2 fixed panels
 // * Saving
 // * Modules
+mod lines;
 mod tree;
 use tree::{jsons_to_trees, last_node, next_node, prior_node, Node, PseudoNode};
 fn main() -> Result<(), io::Error> {
