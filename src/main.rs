@@ -20,6 +20,14 @@ use tui::{
 //   * Parsing is a bit slow
 //   * Querying is slow
 //   * Rendering is intolerably slow
+// * To improve rendering:
+//   * To allow partial rendering, make it possible to start rendering midway through the json
+//   (done)
+//   * Need to implement "retreat" to undo "advance" so you can use a JsonText to store the current
+//   scroll state
+//   * Maybe we can swap out the tree for a flat array? Moving back and forth would be easier.
+//   Folding is a bit tricky: probably store how many lines to skip if folded. Maybe do this before
+//   implementing "retreat" so it'll be easier.
 // * Arrow key + emacs shortcuts for the query editor
 // * Make scrolling suck less
 // * Edit tree, instead of 2 fixed panels
@@ -111,98 +119,166 @@ fn main() -> Result<(), io::Error> {
     Ok(())
 }
 
+struct JsonText<'a> {
+    indent: usize,
+    v: Option<NodeRef<'a, PseudoNode>>,
+    close: bool,
+    focus: Option<NodeId>,
+}
+impl<'a> JsonText<'a> {
+    fn advance(&mut self) {
+        let v = match self.v {
+            None => return,
+            Some(v) => v,
+        };
+        if !self.close && !v.value().folded {
+            if let Some(child) = v.first_child() {
+                self.v = Some(child);
+                self.indent += 1;
+                return;
+            }
+            if let Node::Array | Node::Object = v.value().node {
+                self.close = true;
+                return;
+            }
+        }
+        if let Some(sib) = v.next_sibling() {
+            self.close = false;
+            self.v = Some(sib);
+            return;
+        }
+        self.v = v.parent();
+        if self.v.is_some() {
+            self.close = true;
+            self.indent -= 1;
+        }
+    }
+}
+
+impl<'a> Iterator for JsonText<'a> {
+    type Item = Vec<Span<'a>>;
+    fn next(&mut self) -> Option<Vec<Span<'a>>> {
+        let v = self.v?;
+        let has_comma = v.next_sibling().is_some();
+        let indent = Span::raw("  ".repeat(self.indent));
+        let mut out = match &v.value().key {
+            Some(key) if !self.close => {
+                vec![indent, Span::raw(format!("{:?}", key)), Span::raw(" : ")]
+            }
+            _ => vec![indent],
+        };
+        let style = if Some(v.id()) == self.focus {
+            Style::default().bg(Color::Blue)
+        } else {
+            Style::default()
+        };
+        match v.value() {
+            PseudoNode {
+                node: Node::Null, ..
+            } => {
+                out.push(Span::styled("null", style));
+                if has_comma {
+                    out.push(Span::raw(","));
+                }
+            }
+            PseudoNode {
+                node: Node::String(s),
+                ..
+            } => {
+                out.push(Span::styled(format!("{:?}", s), style));
+                if has_comma {
+                    out.push(Span::raw(","));
+                }
+            }
+            PseudoNode {
+                node: Node::Bool(b),
+                ..
+            } => {
+                out.push(Span::styled(b.to_string(), style));
+                if has_comma {
+                    out.push(Span::raw(","));
+                }
+            }
+            PseudoNode {
+                node: Node::Number(x),
+                ..
+            } => {
+                out.push(Span::styled(x.to_string(), style));
+                if has_comma {
+                    out.push(Span::raw(","));
+                }
+            }
+            PseudoNode {
+                node: Node::Array,
+                folded: true,
+                ..
+            } => {
+                out.push(Span::styled("[...]", style));
+                if has_comma {
+                    out.push(Span::raw(","));
+                }
+                out.push(Span::styled(
+                    format!(" ({} items)", v.children().count()),
+                    Style::default().add_modifier(Modifier::DIM),
+                ));
+            }
+            PseudoNode {
+                node: Node::Array,
+                folded: false,
+                ..
+            } if !self.close => {
+                out.push(Span::styled("[", style));
+            }
+            PseudoNode {
+                node: Node::Array,
+                folded: false,
+                ..
+            } => {
+                out.push(Span::styled("]", style));
+            }
+            PseudoNode {
+                node: Node::Object,
+                folded: true,
+                ..
+            } => {
+                out.push(Span::styled("{...}", style));
+                if has_comma {
+                    out.push(Span::raw(","));
+                }
+                out.push(Span::styled(
+                    format!(" ({} items)", v.children().count()),
+                    Style::default().add_modifier(Modifier::DIM),
+                ));
+            }
+            PseudoNode {
+                node: Node::Object,
+                folded: false,
+                ..
+            } if !self.close => {
+                out.push(Span::styled("{", style));
+            }
+            PseudoNode {
+                node: Node::Object,
+                folded: false,
+                ..
+            } => {
+                out.push(Span::styled("}", style));
+            }
+        }
+        self.advance();
+        Some(out)
+    }
+}
+
 fn json_to_text<'a>(
-    indent_n: usize,
     v: NodeRef<'a, PseudoNode>,
     focus: Option<NodeId>,
-) -> Box<dyn Iterator<Item = Vec<Span<'a>>> + 'a> {
-    let indent = Span::raw("  ".repeat(indent_n));
-    let style = if Some(v.id()) == focus {
-        Style::default().bg(Color::Blue)
-    } else {
-        Style::default()
-    };
-    let node = &v.value().node;
-    let mut prefix = match &v.value().key {
-        None => vec![indent],
-        Some(key) => vec![indent, Span::raw(format!("{:?}", key)), Span::raw(" : ")],
-    };
-    let has_comma = v.next_sibling().is_some();
-    match node {
-        Node::Null => {
-            prefix.push(Span::styled("null", style));
-            if has_comma {
-                prefix.push(Span::raw(","));
-            }
-            Box::new(once(prefix))
-        }
-        Node::String(s) => {
-            prefix.push(Span::styled(format!("{:?}", s), style));
-            if has_comma {
-                prefix.push(Span::raw(","));
-            }
-            Box::new(once(prefix))
-        }
-        Node::Bool(b) => {
-            prefix.push(Span::styled(b.to_string(), style));
-            if has_comma {
-                prefix.push(Span::raw(","));
-            }
-            Box::new(once(prefix))
-        }
-        Node::Number(x) => {
-            prefix.push(Span::styled(x.to_string(), style));
-            if has_comma {
-                prefix.push(Span::raw(","));
-            }
-            Box::new(once(prefix))
-        }
-        Node::Array if v.value().folded => {
-            prefix.push(Span::styled("[...]", style));
-            if has_comma {
-                prefix.push(Span::raw(","));
-            }
-            prefix.push(Span::styled(
-                format!(" ({} items)", v.children().count()),
-                Style::default().add_modifier(Modifier::DIM),
-            ));
-            Box::new(once(prefix))
-        }
-        Node::Array => {
-            prefix.push(Span::styled("[", style));
-            let indent = Span::raw("  ".repeat(indent_n));
-            let mut close = vec![indent, Span::styled("]", style)];
-            if has_comma {
-                close.push(Span::raw(","));
-            }
-            let values = v
-                .children()
-                .flat_map(move |v| json_to_text(indent_n + 1, v, focus));
-            Box::new(once(prefix).chain(values).chain(once(close)))
-        }
-        Node::Object if v.value().folded => {
-            prefix.push(Span::styled("{...}", style));
-            if has_comma {
-                prefix.push(Span::raw(","));
-            }
-            prefix.push(Span::styled(
-                format!(" ({} items)", v.children().count()),
-                Style::default().add_modifier(Modifier::DIM),
-            ));
-            Box::new(once(prefix))
-        }
-        Node::Object => {
-            prefix.push(Span::styled("{", style));
-            let indent = Span::raw("  ".repeat(indent_n));
-            let mut close = vec![indent, Span::styled("}", style)];
-            if has_comma {
-                close.push(Span::raw(","));
-            }
-            let values = v
-                .children()
-                .flat_map(move |v| json_to_text(indent_n + 1, v, focus));
-            Box::new(once(prefix).chain(values).chain(once(close)))
-        }
+) -> impl Iterator<Item = Vec<Span<'a>>> {
+    JsonText {
+        indent: 0,
+        v: Some(v),
+        close: false,
+        focus,
     }
 }
 
@@ -247,7 +323,7 @@ impl View {
             .flat_map(|(i, tree)| {
                 let node_focus =
                     focus.and_then(|(idx, node)| if i == idx { Some(node) } else { None });
-                json_to_text(0, tree.root(), node_focus)
+                json_to_text(tree.root(), node_focus)
             })
             .map(Spans::from)
             .collect();
