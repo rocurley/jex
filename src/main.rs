@@ -172,14 +172,14 @@ impl View {
             cursor,
         }
     }
-    fn render(&self) -> Paragraph {
+    fn render(&self, line_limit: u16) -> Paragraph {
         let View {
             lines,
             cursor,
             scroll,
             ..
         } = self;
-        let text = render_lines(*scroll, cursor, lines);
+        let text = render_lines(*scroll, line_limit, cursor, lines);
         Paragraph::new(text)
             .style(Style::default().fg(Color::White).bg(Color::Black))
             .alignment(Alignment::Left)
@@ -245,12 +245,12 @@ impl App {
                 .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)].as_ref())
                 .split(vchunks[0]);
             let left_block = Block::default().title("Left").borders(Borders::ALL);
-            let left_paragraph = left.render().block(left_block);
+            let left_paragraph = left.render(chunks[0].height).block(left_block);
             f.render_widget(left_paragraph, chunks[0]);
             let right_block = Block::default().title("Right").borders(Borders::ALL);
             match right {
                 Some(right) => {
-                    let right_paragraph = right.render().block(right_block);
+                    let right_paragraph = right.render(chunks[1].height).block(right_block);
                     f.render_widget(right_paragraph, chunks[1]);
                 }
                 None => f.render_widget(right_block, chunks[1]),

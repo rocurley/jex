@@ -119,10 +119,11 @@ fn json_to_lines_inner(
 
 pub fn render_lines<'a>(
     mut scroll: usize,
+    mut line_limit: u16,
     cursor: &'a Option<(usize, usize)>,
     lines: &'a [Vec<Line>],
 ) -> Vec<Spans<'a>> {
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(line_limit.into());
     for (i, value_lines) in lines.iter().enumerate() {
         if value_lines.len() <= scroll {
             scroll -= value_lines.len();
@@ -142,12 +143,16 @@ pub fn render_lines<'a>(
             cursor,
             i: scroll,
         };
-        for line in value_lines {
+        for line in value_lines.take(line_limit.into()) {
             out.push(Spans::from(line));
+            line_limit -= 1;
         }
         scroll = 0;
+        if line_limit == 0 {
+            return out;
+        }
     }
-    return out;
+    out
 }
 
 struct JsonText<'a> {
