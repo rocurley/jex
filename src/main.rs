@@ -10,7 +10,6 @@ use tui::{
     backend::TermionBackend,
     layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Style},
-    text::Spans,
     widgets::{Block, Borders, Paragraph, Wrap},
     Terminal,
 };
@@ -20,11 +19,7 @@ use tui::{
 //   * Querying is slow
 //   * Rendering is intolerably slow
 // * To improve rendering:
-//   * To allow partial rendering, make it possible to start rendering midway through the json
-//   (done)
-//   * Need to implement "retreat" to undo "advance" so you can use a JsonText to store the current
-//   scroll state
-//   * Maybe we can swap out the tree for a flat array? Moving back and forth would be easier.
+//   * Pass the number of lines desired to render_lines, cut off once that's achieved
 //   Folding is a bit tricky: probably store how many lines to skip if folded. Maybe do this before
 //   implementing "retreat" so it'll be easier.
 // * Arrow key + emacs shortcuts for the query editor

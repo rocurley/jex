@@ -122,27 +122,32 @@ pub fn render_lines<'a>(
     cursor: &'a Option<(usize, usize)>,
     lines: &'a [Vec<Line>],
 ) -> Vec<Spans<'a>> {
-    lines
-        .iter()
-        .enumerate()
-        .flat_map(move |(i, item_lines)| {
-            let cursor = cursor.and_then(
-                |(value_ix, line_ix)| {
-                    if value_ix == i {
-                        Some(line_ix)
-                    } else {
-                        None
-                    }
-                },
-            );
-            JsonText {
-                lines: item_lines,
-                cursor,
-                i: 0,
-            }
-        })
-        .map(Spans::from)
-        .collect()
+    let mut out = Vec::new();
+    for (i, value_lines) in lines.iter().enumerate() {
+        if value_lines.len() <= scroll {
+            scroll -= value_lines.len();
+            continue;
+        }
+        let cursor = cursor.and_then(
+            |(value_ix, line_ix)| {
+                if value_ix == i {
+                    Some(line_ix)
+                } else {
+                    None
+                }
+            },
+        );
+        let value_lines = JsonText {
+            lines: value_lines,
+            cursor,
+            i: scroll,
+        };
+        for line in value_lines {
+            out.push(Spans::from(line));
+        }
+        scroll = 0;
+    }
+    return out;
 }
 
 struct JsonText<'a> {
