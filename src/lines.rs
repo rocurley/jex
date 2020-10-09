@@ -1,7 +1,7 @@
 use serde_json::value::{Number, Value};
 use tui::{
     style::{Color, Modifier, Style},
-    text::Span,
+    text::{Span, Spans},
 };
 
 #[derive(Debug, Clone)]
@@ -9,6 +9,7 @@ pub struct Line {
     pub content: LineContent,
     pub key: Option<String>,
     pub folded: bool,
+    pub indent: usize,
 }
 
 impl Line {
@@ -52,58 +53,64 @@ pub fn json_to_lines<'a, I: Iterator<Item = &'a Value>>(vs: I) -> Vec<Vec<Line>>
     vs.into_iter()
         .map(|value| {
             let mut out = Vec::new();
-            json_to_lines_inner(None, value, &mut out);
+            json_to_lines_inner(None, value, 0, &mut out);
             out
         })
         .collect()
 }
 
-fn push_line(key: Option<String>, content: LineContent, out: &mut Vec<Line>) {
+fn push_line(key: Option<String>, content: LineContent, indent: usize, out: &mut Vec<Line>) {
     let line = Line {
         content,
         key,
         folded: false,
+        indent,
     };
     out.push(line);
 }
 
-fn json_to_lines_inner(key: Option<String>, v: &Value, out: &mut Vec<Line>) -> usize {
+fn json_to_lines_inner(
+    key: Option<String>,
+    v: &Value,
+    indent: usize,
+    out: &mut Vec<Line>,
+) -> usize {
     match v {
         Value::Null => {
-            push_line(key, LineContent::Null, out);
+            push_line(key, LineContent::Null, indent, out);
             1
         }
         Value::Bool(b) => {
-            push_line(key, LineContent::Bool(*b), out);
+            push_line(key, LineContent::Bool(*b), indent, out);
             1
         }
         Value::Number(x) => {
-            push_line(key, LineContent::Number(x.clone()), out);
+            push_line(key, LineContent::Number(x.clone()), indent, out);
             1
         }
         Value::String(s) => {
-            push_line(key, LineContent::String(s.clone()), out);
+            push_line(key, LineContent::String(s.clone()), indent, out);
             1
         }
         Value::Array(xs) => {
             let mut count = 0;
             let start_position = out.len();
-            push_line(key, LineContent::ArrayStart(0), out);
+            push_line(key, LineContent::ArrayStart(0), indent, out);
             for x in xs.iter() {
-                count += json_to_lines_inner(None, x, out);
+                count += json_to_lines_inner(None, x, indent + 1, out);
             }
-            push_line(None, LineContent::ArrayEnd(count), out);
+            push_line(None, LineContent::ArrayEnd(count), indent, out);
             out[start_position].content = LineContent::ArrayStart(count);
             count + 2
         }
         Value::Object(xs) => {
             let mut count = 0;
             let start_position = out.len();
-            push_line(key, LineContent::ObjectStart(0), out);
+            push_line(key, LineContent::ObjectStart(0), indent, out);
             for (k, x) in xs.iter() {
-                count += json_to_lines_inner(Some(k.clone()), x, out);
+                count += json_to_lines_inner(Some(k.clone()), x, indent + 1, out);
             }
-            push_line(None, LineContent::ObjectEnd(count), out);
+            push_line(None, LineContent::ObjectEnd(count), indent, out);
             out[start_position].content = LineContent::ObjectStart(count);
             count + 2
         }
@@ -111,30 +118,34 @@ fn json_to_lines_inner(key: Option<String>, v: &Value, out: &mut Vec<Line>) -> u
 }
 
 pub fn render_lines<'a>(
+    mut scroll: usize,
     cursor: &'a Option<(usize, usize)>,
     lines: &'a [Vec<Line>],
-) -> impl Iterator<Item = Vec<Span<'a>>> {
-    lines.iter().enumerate().flat_map(move |(i, item_lines)| {
-        let cursor = cursor.and_then(
-            |(value_ix, line_ix)| {
-                if value_ix == i {
-                    Some(line_ix)
-                } else {
-                    None
-                }
-            },
-        );
-        JsonText {
-            indent: 0,
-            lines: item_lines,
-            cursor,
-            i: 0,
-        }
-    })
+) -> Vec<Spans<'a>> {
+    lines
+        .iter()
+        .enumerate()
+        .flat_map(move |(i, item_lines)| {
+            let cursor = cursor.and_then(
+                |(value_ix, line_ix)| {
+                    if value_ix == i {
+                        Some(line_ix)
+                    } else {
+                        None
+                    }
+                },
+            );
+            JsonText {
+                lines: item_lines,
+                cursor,
+                i: 0,
+            }
+        })
+        .map(Spans::from)
+        .collect()
 }
 
 struct JsonText<'a> {
-    indent: usize,
     lines: &'a [Line],
     cursor: Option<usize>,
     i: usize,
@@ -148,10 +159,7 @@ impl<'a> Iterator for JsonText<'a> {
             None => false,
             Some(line) => line.is_closing(),
         };
-        if let LineContent::ArrayEnd(_) | LineContent::ObjectEnd(_) = line.content {
-            self.indent -= 1;
-        }
-        let indent_span = Span::raw("  ".repeat(self.indent));
+        let indent_span = Span::raw("  ".repeat(line.indent));
         let mut out = match &line.key {
             Some(key) => vec![
                 indent_span,
@@ -273,11 +281,6 @@ impl<'a> Iterator for JsonText<'a> {
                 out.push(Span::styled("}", style));
             }
         };
-        if !line.folded {
-            if let LineContent::ArrayStart(_) | LineContent::ObjectStart(_) = line.content {
-                self.indent += 1;
-            }
-        }
         self.i += line.next_displayed_offset();
         Some(out)
     }

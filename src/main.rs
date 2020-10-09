@@ -158,8 +158,9 @@ struct App {
     query: String,
 }
 
+#[derive(Debug, Clone)]
 struct View {
-    scroll: u16,
+    scroll: usize,
     values: Vec<Value>,
     lines: Vec<Vec<Line>>,
     cursor: Option<(usize, usize)>,
@@ -183,11 +184,10 @@ impl View {
             scroll,
             ..
         } = self;
-        let text: Vec<Spans> = render_lines(cursor, lines).map(Spans::from).collect();
+        let text = render_lines(*scroll, cursor, lines);
         Paragraph::new(text)
             .style(Style::default().fg(Color::White).bg(Color::Black))
             .alignment(Alignment::Left)
-            .scroll((*scroll, 0))
         //.wrap(Wrap { trim: false })
     }
     fn apply_query(&self, query: &str) -> Self {
@@ -211,12 +211,12 @@ impl App {
         let content: Vec<Value> = Deserializer::from_reader(r)
             .into_iter::<Value>()
             .collect::<Result<Vec<Value>, _>>()?;
+        let left = View::new(content);
         let stdout = io::stdout().into_raw_mode()?;
         let stdout = MouseTerminal::from(stdout);
         let stdout = AlternateScreen::from(stdout);
         let backend = TermionBackend::new(stdout);
         let terminal = Terminal::new(backend)?;
-        let left = View::new(content);
         let mut app = App {
             terminal,
             left,
