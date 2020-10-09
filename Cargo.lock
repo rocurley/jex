@@ -376,6 +376,7 @@ dependencies = [
  "criterion",
  "ego-tree",
  "jq-rs",
+ "jq-sys",
  "proptest",
  "serde_json",
  "termion",
