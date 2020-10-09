@@ -50,13 +50,12 @@ pub enum LineContent {
 }
 
 pub fn json_to_lines<'a, I: Iterator<Item = &'a Value>>(vs: I) -> Vec<Vec<Line>> {
-    vs.into_iter()
-        .map(|value| {
-            let mut out = Vec::new();
-            json_to_lines_inner(None, value, 0, &mut out);
-            out
-        })
-        .collect()
+    vs.map(|value| {
+        let mut out = Vec::new();
+        json_to_lines_inner(None, value, 0, &mut out);
+        out
+    })
+    .collect()
 }
 
 fn push_line(key: Option<String>, content: LineContent, indent: usize, out: &mut Vec<Line>) {

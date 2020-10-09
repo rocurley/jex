@@ -1,6 +1,7 @@
 use argh::FromArgs;
+use cpuprofiler::PROFILER;
 use serde_json::{value::Value, Deserializer};
-use std::{env, fs, io};
+use std::{fs, io};
 use termion::{
     event::Key,
     input::{MouseTerminal, TermRead},
@@ -19,26 +20,61 @@ use tui::{
 struct Args {
     #[argh(positional)]
     json_path: String,
+
+    #[argh(switch, description = "load the file and then quit")]
+    bench: bool,
 }
 // TODO
-// * Large file perf:
-//   * Parsing is quite slow
-//   * Querying is slow
+// * Large file perf (181 mb):
+//   * Initial parsing (serde): 3.86 sec (left and right)
+//   * Pre-rendering (lines): 2.06 sec (left and right)
+//   * Query execution: 38.4 sec
+//     * Re-serialization: 1.65 sec
+//     * JQ total execution: 34.83 sec
+//       * JQ input parsing: 12.77 sec
+//       * Computing result: 0???? (it is the trivial filter)
+//       * JQ result serialization: 22.04 sec (!!!!)
+//     * JQ result parsing: 1.15 sec
 //   * Rendering is fast!
 // * Arrow key + emacs shortcuts for the query editor
 // * Make scrolling suck less
 // * Edit tree, instead of 2 fixed panels
 // * Saving
 // * Modules
+
+// Since JQ is spending most of its time on ser/de, there are huge gains on the table here:
+// directly converting from serde::Value to jv and vice versa is likely to be doable in about a
+// second. It's really interesting that JQ ser/de is a hell of a lot slower than serde: by about a
+// factor of 10. Why would that be the case?
+// Ideally, we'd have:
+// serde -> lines (initial rendering)
+// serde -> jq (querying)
+// jq -> lines (direct result rendering)
+// jq -> serde (saving)
+// Start with round trip between serde and jq, save jq -> lines for an optimization.
 mod lines;
 use lines::{json_to_lines, render_lines, Line, LineContent};
 fn main() -> Result<(), io::Error> {
     let args: Args = argh::from_env();
+    if args.bench {
+        let mut profiler = PROFILER.lock().unwrap();
+        profiler.start("profile").unwrap();
+    };
     let stdin = io::stdin();
     let f = fs::File::open(args.json_path)?;
     let r = io::BufReader::new(f);
     let mut app = App::new(r)?;
-    app.render()?;
+    if args.bench {
+        let mut profiler = PROFILER.lock().unwrap();
+        profiler.stop().unwrap();
+        return Ok(());
+    }
+    let stdout = io::stdout().into_raw_mode()?;
+    let stdout = MouseTerminal::from(stdout);
+    let stdout = AlternateScreen::from(stdout);
+    let backend = TermionBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+    app.render(&mut terminal)?;
     let mut keys = stdin.keys();
     while let Some(c) = keys.next() {
         let view = &mut app.left;
@@ -116,7 +152,7 @@ fn main() -> Result<(), io::Error> {
             }
             Key::Char('q') => {
                 app.new_query = Some(app.query.clone());
-                app.render()?;
+                app.render(&mut terminal)?;
                 #[allow(clippy::while_let_on_iterator)]
                 while let Some(key) = keys.next() {
                     let new_query = app.new_query.as_mut().unwrap();
@@ -129,11 +165,11 @@ fn main() -> Result<(), io::Error> {
                         }
                         Key::Backspace => {
                             new_query.pop();
-                            app.render()?;
+                            app.render(&mut terminal)?;
                         }
                         Key::Char(c) => {
                             new_query.push(c);
-                            app.render()?;
+                            app.render(&mut terminal)?;
                         }
                         _ => {}
                     }
@@ -141,7 +177,7 @@ fn main() -> Result<(), io::Error> {
             }
             _ => {}
         }
-        app.render()?;
+        app.render(&mut terminal)?;
     }
     Ok(())
 }
@@ -149,7 +185,6 @@ fn main() -> Result<(), io::Error> {
 type Screen = AlternateScreen<MouseTerminal<RawTerminal<io::Stdout>>>;
 
 struct App {
-    terminal: Terminal<TermionBackend<Screen>>,
     left: View,
     right: Option<View>,
     new_query: Option<String>,
@@ -210,13 +245,7 @@ impl App {
             .into_iter::<Value>()
             .collect::<Result<Vec<Value>, _>>()?;
         let left = View::new(content);
-        let stdout = io::stdout().into_raw_mode()?;
-        let stdout = MouseTerminal::from(stdout);
-        let stdout = AlternateScreen::from(stdout);
-        let backend = TermionBackend::new(stdout);
-        let terminal = Terminal::new(backend)?;
         let mut app = App {
-            terminal,
             left,
             right: None,
             new_query: None,
@@ -228,9 +257,8 @@ impl App {
     fn recompute_right(&mut self) {
         self.right = Some(self.left.apply_query(&self.query));
     }
-    fn render(&mut self) -> io::Result<()> {
+    fn render(&mut self, terminal: &mut Terminal<TermionBackend<Screen>>) -> io::Result<()> {
         let App {
-            terminal,
             left,
             right,
             query,
