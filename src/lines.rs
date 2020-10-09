@@ -99,21 +99,44 @@ fn json_to_lines_inner(key: Option<String>, v: &Value, out: &mut Vec<Line>) -> u
         Value::Object(xs) => {
             let mut count = 0;
             let start_position = out.len();
-            push_line(key, LineContent::ArrayStart(0), out);
+            push_line(key, LineContent::ObjectStart(0), out);
             for (k, x) in xs.iter() {
                 count += json_to_lines_inner(Some(k.clone()), x, out);
             }
-            push_line(None, LineContent::ArrayEnd(count), out);
-            out[start_position].content = LineContent::ArrayStart(count);
+            push_line(None, LineContent::ObjectEnd(count), out);
+            out[start_position].content = LineContent::ObjectStart(count);
             count + 2
         }
     }
 }
 
+pub fn render_lines<'a>(
+    cursor: &'a Option<(usize, usize)>,
+    lines: &'a [Vec<Line>],
+) -> impl Iterator<Item = Vec<Span<'a>>> {
+    lines.iter().enumerate().flat_map(move |(i, item_lines)| {
+        let cursor = cursor.and_then(
+            |(value_ix, line_ix)| {
+                if value_ix == i {
+                    Some(line_ix)
+                } else {
+                    None
+                }
+            },
+        );
+        JsonText {
+            indent: 0,
+            lines: item_lines,
+            cursor,
+            i: 0,
+        }
+    })
+}
+
 struct JsonText<'a> {
     indent: usize,
     lines: &'a [Line],
-    cursor: usize,
+    cursor: Option<usize>,
     i: usize,
 }
 impl<'a> Iterator for JsonText<'a> {
@@ -125,16 +148,19 @@ impl<'a> Iterator for JsonText<'a> {
             None => false,
             Some(line) => line.is_closing(),
         };
+        if let LineContent::ArrayEnd(_) | LineContent::ObjectEnd(_) = line.content {
+            self.indent -= 1;
+        }
         let indent_span = Span::raw("  ".repeat(self.indent));
         let mut out = match &line.key {
-            Some(key) if !line.is_closing() => vec![
+            Some(key) => vec![
                 indent_span,
                 Span::raw(format!("{:?}", key)),
                 Span::raw(" : "),
             ],
             _ => vec![indent_span],
         };
-        let style = if self.i == self.cursor {
+        let style = if Some(self.i) == self.cursor {
             Style::default().bg(Color::Blue)
         } else {
             Style::default()
@@ -203,7 +229,6 @@ impl<'a> Iterator for JsonText<'a> {
                 ..
             } => {
                 out.push(Span::styled("[", style));
-                self.indent += 1;
             }
             Line {
                 content: LineContent::ArrayEnd(_),
@@ -211,7 +236,6 @@ impl<'a> Iterator for JsonText<'a> {
                 ..
             } => {
                 out.push(Span::styled("]", style));
-                self.indent -= 1;
             }
             Line {
                 content: LineContent::ObjectStart(skipped_lines),
@@ -240,7 +264,6 @@ impl<'a> Iterator for JsonText<'a> {
                 ..
             } => {
                 out.push(Span::styled("{", style));
-                self.indent += 1;
             }
             Line {
                 content: LineContent::ObjectEnd(_),
@@ -248,9 +271,13 @@ impl<'a> Iterator for JsonText<'a> {
                 ..
             } => {
                 out.push(Span::styled("}", style));
-                self.indent -= 1;
             }
         };
+        if !line.folded {
+            if let LineContent::ArrayStart(_) | LineContent::ObjectStart(_) = line.content {
+                self.indent += 1;
+            }
+        }
         self.i += line.next_displayed_offset();
         Some(out)
     }
