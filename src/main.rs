@@ -52,8 +52,10 @@ struct Args {
 // jq -> lines (direct result rendering)
 // jq -> serde (saving)
 // Start with round trip between serde and jq, save jq -> lines for an optimization.
-mod lines;
-use lines::{json_to_lines, render_lines, Line, LineContent};
+use jed::{
+    jq::run_jq_query,
+    lines::{json_to_lines, render_lines, Line, LineContent},
+};
 fn main() -> Result<(), io::Error> {
     let args: Args = argh::from_env();
     if args.bench {
@@ -225,16 +227,7 @@ impl View {
     }
     fn apply_query(&self, query: &str) -> Self {
         let mut prog = jq_rs::compile(query).expect("jq compilation error");
-        let right_strings: Vec<String> = self
-            .values
-            .iter()
-            .map(|j| prog.run(&j.to_string()).expect("jq execution error"))
-            .collect();
-        let right_content: Result<Vec<Value>, _> = right_strings
-            .iter()
-            .flat_map(|j| Deserializer::from_str(j).into_iter::<Value>())
-            .collect();
-        let values = right_content.expect("json decoding error");
+        let values = run_jq_query(self.values, &mut prog);
         View::new(values)
     }
 }
