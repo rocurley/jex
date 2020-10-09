@@ -1,3 +1,4 @@
+use argh::FromArgs;
 use serde_json::{value::Value, Deserializer};
 use std::{env, fs, io};
 use termion::{
@@ -13,15 +14,17 @@ use tui::{
     widgets::{Block, Borders, Paragraph, Wrap},
     Terminal,
 };
+#[derive(FromArgs, PartialEq, Debug)]
+/// A command with positional arguments.
+struct Args {
+    #[argh(positional)]
+    json_path: String,
+}
 // TODO
 // * Large file perf:
-//   * Parsing is a bit slow
+//   * Parsing is quite slow
 //   * Querying is slow
-//   * Rendering is intolerably slow
-// * To improve rendering:
-//   * Pass the number of lines desired to render_lines, cut off once that's achieved
-//   Folding is a bit tricky: probably store how many lines to skip if folded. Maybe do this before
-//   implementing "retreat" so it'll be easier.
+//   * Rendering is fast!
 // * Arrow key + emacs shortcuts for the query editor
 // * Make scrolling suck less
 // * Edit tree, instead of 2 fixed panels
@@ -30,9 +33,9 @@ use tui::{
 mod lines;
 use lines::{json_to_lines, render_lines, Line, LineContent};
 fn main() -> Result<(), io::Error> {
-    let args: Vec<String> = env::args().collect();
+    let args: Args = argh::from_env();
     let stdin = io::stdin();
-    let f = fs::File::open(&args[1])?;
+    let f = fs::File::open(args.json_path)?;
     let r = io::BufReader::new(f);
     let mut app = App::new(r)?;
     app.render()?;
