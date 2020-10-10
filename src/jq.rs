@@ -5,10 +5,12 @@ use jq_sys::{
     jv_kind_JV_KIND_NULL, jv_kind_JV_KIND_NUMBER, jv_kind_JV_KIND_OBJECT, jv_kind_JV_KIND_STRING,
     jv_kind_JV_KIND_TRUE, jv_null, jv_number, jv_number_value, jv_object, jv_object_iter,
     jv_object_iter_key, jv_object_iter_next, jv_object_iter_valid, jv_object_iter_value,
-    jv_object_set, jv_string_sized, jv_string_value,
+    jv_object_set, jv_string_length_bytes, jv_string_sized, jv_string_value,
 };
 use serde_json::{value::Value, Deserializer, Number};
-use std::{convert::TryInto, ffi::CStr, iter::FromIterator, mem::forget, os::raw::c_char};
+use std::{
+    convert::TryInto, ffi::CStr, iter::FromIterator, mem::forget, os::raw::c_char, slice, str,
+};
 pub fn run_jq_query(content: &[Value], prog: &mut jq_rs::JqProgram) -> Vec<Value> {
     let right_strings: Vec<String> = content
         .iter()
@@ -51,6 +53,11 @@ impl Clone for JV {
 }
 
 impl JV {
+    pub fn unwrap_without_drop(self) -> jv {
+        let JV { ptr } = self;
+        forget(self);
+        ptr
+    }
     pub fn empty_array() -> Self {
         JV {
             ptr: unsafe { jv_array() },
@@ -126,22 +133,26 @@ impl JV {
         unsafe { jv_number_value(self.ptr) }
     }
     pub fn string_value(&self) -> &str {
-        let c_str = unsafe {
-            let string_ptr = jv_string_value(self.ptr);
-            CStr::from_ptr(string_ptr)
+        let slice = unsafe {
+            let string_ptr = jv_string_value(self.ptr) as *const u8;
+            let len = jv_string_length_bytes(self.clone().unwrap_without_drop());
+            dbg!(len);
+            slice::from_raw_parts(
+                string_ptr,
+                len.try_into().expect("length cannot be parsed as usize"),
+            )
         };
-        c_str.to_str().expect("JQ strings are supposed to be UTF-8")
+        dbg!(str::from_utf8(slice).expect("JQ strings are supposed to be UTF-8"))
     }
     pub fn object_iter<'a>(&'a self) -> impl Iterator<Item = (String, JV)> + 'a {
         let i = unsafe { jv_object_iter(self.ptr) };
         ObjectIterator { i, obj: self }
     }
     pub fn array_iter<'a>(&'a self) -> impl Iterator<Item = JV> + 'a {
-        (0..unsafe { jv_array_length(self.clone().ptr) })
-            .into_iter()
-            .map(move |i| JV {
-                ptr: unsafe { jv_array_get(self.clone().ptr, i) },
-            })
+        let len = unsafe { jv_array_length(self.clone().unwrap_without_drop()) };
+        (0..len).into_iter().map(move |i| JV {
+            ptr: unsafe { jv_array_get(self.clone().unwrap_without_drop(), i) },
+        })
     }
     pub fn to_serde(&self) -> Option<Value> {
         match self.get_kind() {
@@ -216,4 +227,65 @@ impl<'a> Iterator for ObjectIterator<'a> {
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use super::JV;
+    use proptest::{prelude::*, proptest};
+    use serde_json::{json, value::Value};
+    fn arb_json() -> impl Strategy<Value = Value> {
+        let leaf = prop_oneof![
+            Just(Value::Null),
+            any::<bool>().prop_map(Value::Bool),
+            any::<f64>().prop_map(|f| f.into()),
+            ".*".prop_map(Value::String),
+        ];
+        leaf.prop_recursive(
+            8,   // 8 levels deep
+            256, // Shoot for maximum size of 256 nodes
+            10,  // We put up to 10 items per collection
+            |inner| {
+                prop_oneof![
+                    // Take the inner strategy and make the two recursive cases.
+                    prop::collection::vec(inner.clone(), 0..10).prop_map(Value::Array),
+                    prop::collection::hash_map(".*", inner, 0..10)
+                        .prop_map(|m| { Value::Object(m.into_iter().collect()) }),
+                ]
+            },
+        )
+    }
+    fn test_jv_roundtrip(value: Value) {
+        let jv = JV::from_serde(&value);
+        let roundtrip = jv.to_serde().unwrap();
+        assert_eq!(value, roundtrip);
+        println!("Done!");
+    }
+    #[test]
+    fn null_jv_roundtrip() {
+        test_jv_roundtrip(json!(null));
+    }
+    #[test]
+    fn bool_jv_roundtrip() {
+        test_jv_roundtrip(json!(true));
+    }
+    #[test]
+    fn string_jv_roundtrip() {
+        test_jv_roundtrip(json!("hello"));
+    }
+    #[test]
+    fn number_jv_roundtrip() {
+        test_jv_roundtrip(json!(42.0));
+    }
+    #[test]
+    fn array_jv_roundtrip() {
+        test_jv_roundtrip(json!([1.0, 2.0, 3.0]));
+    }
+    #[test]
+    fn object_jv_roundtrip() {
+        test_jv_roundtrip(json!({"key":"value"}));
+    }
+    proptest! {
+        #[test]
+        fn prop_jv_roundtrip(value in arb_json()) {
+            test_jv_roundtrip(value);
+        }
+    }
+}

@@ -227,7 +227,7 @@ impl View {
     }
     fn apply_query(&self, query: &str) -> Self {
         let mut prog = jq_rs::compile(query).expect("jq compilation error");
-        let values = run_jq_query(self.values, &mut prog);
+        let values = run_jq_query(&self.values, &mut prog);
         View::new(values)
     }
 }
