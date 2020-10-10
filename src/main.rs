@@ -53,7 +53,7 @@ struct Args {
 // jq -> serde (saving)
 // Start with round trip between serde and jq, save jq -> lines for an optimization.
 use jed::{
-    jq::run_jq_query,
+    jq::{jv::JV, JQ},
     lines::{json_to_lines, render_lines, Line, LineContent},
 };
 fn main() -> Result<(), io::Error> {
@@ -226,9 +226,15 @@ impl View {
         //.wrap(Wrap { trim: false })
     }
     fn apply_query(&self, query: &str) -> Self {
-        let mut prog = jq_rs::compile(query).expect("jq compilation error");
-        let values = run_jq_query(&self.values, &mut prog);
-        View::new(values)
+        let mut prog = JQ::compile(query).expect("jq compilation error");
+        let mut results: Vec<Value> = Vec::new();
+        for value in &self.values {
+            let jv = JV::from_serde(value);
+            for res in prog.execute(jv) {
+                results.push(res.to_serde().unwrap());
+            }
+        }
+        View::new(results)
     }
 }
 
