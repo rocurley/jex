@@ -68,36 +68,19 @@ impl<'a> Iterator for JQResults<'a> {
 #[cfg(test)]
 mod tests {
     use super::{JQ, JV};
-    use proptest::{prelude::*, proptest};
+    use crate::testing::arb_json;
+    use proptest::proptest;
     use serde_json::value::Value;
-    fn arb_json() -> impl Strategy<Value = Value> {
-        let leaf = prop_oneof![
-            Just(Value::Null),
-            any::<bool>().prop_map(Value::Bool),
-            any::<f64>().prop_map(|f| f.into()),
-            ".*".prop_map(Value::String),
-        ];
-        leaf.prop_recursive(
-            8,   // 8 levels deep
-            256, // Shoot for maximum size of 256 nodes
-            10,  // We put up to 10 items per collection
-            |inner| {
-                prop_oneof![
-                    // Take the inner strategy and make the two recursive cases.
-                    prop::collection::vec(inner.clone(), 0..10).prop_map(Value::Array),
-                    prop::collection::hash_map(".*", inner, 0..10)
-                        .prop_map(|m| { Value::Object(m.into_iter().collect()) }),
-                ]
-            },
-        )
-    }
-    proptest! {
-        #[test]
-        fn prop_jq_roundtrip(value in arb_json()) {
+    use std::cell::RefCell;
+    #[test]
+    fn prop_jq_roundtrip() {
+        let jq = JQ::compile(".").unwrap();
+        let jq_cell = RefCell::new(jq);
+        proptest!(move |(value in arb_json())| {
             let jv = JV::from_serde(&value);
-            let mut jq = JQ::compile(".").unwrap();
+            let mut jq = jq_cell.borrow_mut();
             let results : Vec<Value> = jq.execute(jv).map(|jv| jv.to_serde().unwrap()).collect();
             assert_eq!(vec![value], results);
-        }
+        })
     }
 }
