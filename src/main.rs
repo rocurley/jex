@@ -25,35 +25,27 @@ struct Args {
     bench: bool,
 }
 // TODO
-// * Large file perf (181 mb):
-//   * Initial parsing (serde): 3.86 sec (left and right)
-//   * Pre-rendering (lines): 2.06 sec (left and right)
-//   * Query execution: 38.4 sec
-//     * Re-serialization: 1.65 sec
-//     * JQ total execution: 34.83 sec
-//       * JQ input parsing: 12.77 sec
-//       * Computing result: 0???? (it is the trivial filter)
-//       * JQ result serialization: 22.04 sec (!!!!)
-//     * JQ result parsing: 1.15 sec
+// * Large file perf (181 mb): 13.68 sec
+//   * Initial parsing (serde): 3.77 sec
+//   * Pre-rendering (lines): 2.29 sec (left and right)
+//   * Query execution: 7.62 sec
+//     * Serde -> JV: 3.38 sec
+//     * Computing result: 0???? (it is the trivial filter)
+//     * JV -> Serde: 3.37 sec
 //   * Rendering is fast!
+// * Error recovery and reporting for compile and runtime errors
 // * Arrow key + emacs shortcuts for the query editor
 // * Make scrolling suck less
+// * Switch panels
 // * Edit tree, instead of 2 fixed panels
 // * Saving
-// * Modules
-
-// Since JQ is spending most of its time on ser/de, there are huge gains on the table here:
-// directly converting from serde::Value to jv and vice versa is likely to be doable in about a
-// second. It's really interesting that JQ ser/de is a hell of a lot slower than serde: by about a
-// factor of 10. Why would that be the case?
-// Ideally, we'd have:
-// serde -> lines (initial rendering)
-// serde -> jq (querying)
-// jq -> lines (direct result rendering)
-// jq -> serde (saving)
+// * Speed up query serialization:
+//   * Cut out serde entirely (except for parsing: hilariously, test -> serde -> jv appears to be
+//   faster than text -> jv).
+//   * Multithreaded serde -> jv
 // Start with round trip between serde and jq, save jq -> lines for an optimization.
 use jed::{
-    jq::{jv::JV, JQ},
+    jq::{run_jq_query, JQ},
     lines::{json_to_lines, render_lines, Line, LineContent},
 };
 fn main() -> Result<(), io::Error> {
@@ -227,14 +219,10 @@ impl View {
     }
     fn apply_query(&self, query: &str) -> Self {
         let mut prog = JQ::compile(query).expect("jq compilation error");
-        let mut results: Vec<Value> = Vec::new();
-        for value in &self.values {
-            let jv = JV::from_serde(value);
-            for res in prog.execute(jv) {
-                results.push(res.to_serde().unwrap());
-            }
+        match run_jq_query(&self.values, &mut prog) {
+            Ok(results) => View::new(results),
+            Err(err) => View::new(vec![Value::String(err)]),
         }
-        View::new(results)
     }
 }
 

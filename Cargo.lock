@@ -375,21 +375,11 @@ dependencies = [
  "cpuprofiler",
  "criterion",
  "ego-tree",
- "jq-rs",
  "jq-sys",
  "proptest",
  "serde_json",
  "termion",
  "tui",
-]
-
-[[package]]
-name = "jq-rs"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9cfaeae42ef96b227ab787558cc7bbd5f1dfe96b4df7c63f92853017751b0e4"
-dependencies = [
- "jq-sys",
 ]
 
 [[package]]

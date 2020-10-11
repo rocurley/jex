@@ -1,18 +1,25 @@
 use jq_sys::{
     jv, jv_array, jv_array_get, jv_array_length, jv_array_set, jv_bool, jv_copy, jv_free,
-    jv_get_kind, jv_kind_JV_KIND_ARRAY, jv_kind_JV_KIND_FALSE, jv_kind_JV_KIND_INVALID,
-    jv_kind_JV_KIND_NULL, jv_kind_JV_KIND_NUMBER, jv_kind_JV_KIND_OBJECT, jv_kind_JV_KIND_STRING,
-    jv_kind_JV_KIND_TRUE, jv_null, jv_number, jv_number_value, jv_object, jv_object_iter,
-    jv_object_iter_key, jv_object_iter_next, jv_object_iter_valid, jv_object_iter_value,
-    jv_object_set, jv_string_length_bytes, jv_string_sized, jv_string_value,
+    jv_get_kind, jv_invalid_get_msg, jv_invalid_has_msg, jv_kind_JV_KIND_ARRAY,
+    jv_kind_JV_KIND_FALSE, jv_kind_JV_KIND_INVALID, jv_kind_JV_KIND_NULL, jv_kind_JV_KIND_NUMBER,
+    jv_kind_JV_KIND_OBJECT, jv_kind_JV_KIND_STRING, jv_kind_JV_KIND_TRUE, jv_null, jv_number,
+    jv_number_value, jv_object, jv_object_iter, jv_object_iter_key, jv_object_iter_next,
+    jv_object_iter_valid, jv_object_iter_value, jv_object_set, jv_string_length_bytes,
+    jv_string_sized, jv_string_value,
 };
 use serde_json::value::Value;
-use std::{convert::TryInto, iter::FromIterator, mem::forget, os::raw::c_char, slice, str};
+use std::{convert::TryInto, fmt, iter::FromIterator, mem::forget, os::raw::c_char, slice, str};
 
 pub struct JV {
     pub(super) ptr: jv,
 }
+impl fmt::Debug for JV {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "JV{{..}}")
+    }
+}
 
+#[derive(Clone, Copy, Eq, Debug, PartialEq)]
 pub enum JVKind {
     Invalid = jv_kind_JV_KIND_INVALID as isize,
     Null = jv_kind_JV_KIND_NULL as isize,
@@ -138,20 +145,35 @@ impl JV {
             ptr: unsafe { jv_array_get(self.clone().unwrap_without_drop(), i) },
         })
     }
-    pub fn to_serde(&self) -> Option<Value> {
+    pub fn invalid_has_msg(&self) -> bool {
+        (unsafe { jv_invalid_has_msg(self.clone().unwrap_without_drop()) }) != 0
+    }
+    pub fn get_invalid_msg(self) -> Option<String> {
+        if self.invalid_has_msg() {
+            let jv_msg = JV {
+                ptr: unsafe { jv_invalid_get_msg(self.unwrap_without_drop()) },
+            };
+            Some(jv_msg.string_value().to_owned())
+        } else {
+            None
+        }
+    }
+    pub fn to_serde(&self) -> Result<Value, String> {
         match self.get_kind() {
-            JVKind::Invalid => None,
-            JVKind::Null => Some(Value::Null),
-            JVKind::False => Some(Value::Bool(false)),
-            JVKind::True => Some(Value::Bool(true)),
-            JVKind::Number => Some(self.number_value().into()),
-            JVKind::String => Some(self.string_value().into()),
-            JVKind::Array => Some(
-                self.array_iter()
-                    .map(|x| x.to_serde().expect("Array element should not be invalid"))
-                    .collect(),
-            ),
-            JVKind::Object => Some(Value::Object(
+            JVKind::Invalid => Err(self
+                .clone()
+                .get_invalid_msg()
+                .unwrap_or_else(|| "No error message".to_owned())),
+            JVKind::Null => Ok(Value::Null),
+            JVKind::False => Ok(Value::Bool(false)),
+            JVKind::True => Ok(Value::Bool(true)),
+            JVKind::Number => Ok(self.number_value().into()),
+            JVKind::String => Ok(self.string_value().into()),
+            JVKind::Array => Ok(self
+                .array_iter()
+                .map(|x| x.to_serde().expect("Array element should not be invalid"))
+                .collect()),
+            JVKind::Object => Ok(Value::Object(
                 self.object_iter()
                     .map(|(k, v)| {
                         (
