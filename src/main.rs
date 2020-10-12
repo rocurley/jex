@@ -108,7 +108,7 @@ fn main() -> Result<(), io::Error> {
         let view = &mut app.left;
         let layout = JedLayout::new(&terminal.get_frame());
         let view_rect = layout.left;
-        let line_limit = view_rect.height.into();
+        let line_limit = view_rect.height as usize - 2;
         match view {
             View::Error(_) => {}
             View::Json(view) => match c {
