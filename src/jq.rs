@@ -46,7 +46,7 @@ impl JQ {
     pub fn take_errors(&mut self) -> impl Iterator<Item = JV> + '_ {
         self.errors.as_mut().drain(..)
     }
-    pub fn compile(s: &str) -> Result<Self, String> {
+    pub fn compile(s: &str) -> Result<Self, Vec<String>> {
         let mut prog = JQ::new();
         let cstr = CString::new(s).expect("Nul byte in jq program");
         let ok = unsafe { jq_compile(prog.ptr, cstr.as_ptr()) };
@@ -57,7 +57,7 @@ impl JQ {
                 .take_errors()
                 .map(|jv| jv.string_value().to_owned())
                 .collect();
-            Err(strings.join("\n"))
+            Err(strings)
         }
     }
     pub fn execute(&mut self, input: JV) -> impl Iterator<Item = JV> + '_ {
@@ -161,15 +161,16 @@ mod tests {
     fn unit_jq_invalid_program() {
         let prog = JQ::compile("lol");
         assert!(prog.is_err());
-        let expected =
-            "jq: error: lol/0 is not defined at <top-level>, line 1:\nlol\njq: 1 compile error";
+        let expected = vec![
+            "jq: error: lol/0 is not defined at <top-level>, line 1:\nlol",
+            "jq: 1 compile error",
+        ];
         assert_eq!(prog.unwrap_err(), expected);
     }
     #[test]
     fn unit_jq_runtime_error() {
         let mut prog = JQ::compile(".[1]").unwrap();
         let res = run_jq_query(&[sample_json()], &mut prog);
-        let errors: Vec<_> = prog.take_errors().collect();
         assert_eq!(res.unwrap_err(), "Cannot index object with number");
     }
 }

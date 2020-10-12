@@ -12,6 +12,7 @@ use tui::{
     backend::TermionBackend,
     layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Style},
+    text::{Span, Spans},
     widgets::{Block, Borders, Paragraph, Wrap},
     Terminal,
 };
@@ -33,7 +34,6 @@ struct Args {
 //     * Computing result: 0???? (it is the trivial filter)
 //     * JV -> Serde: 3.37 sec
 //   * Rendering is fast!
-// * Error recovery and reporting for compile and runtime errors
 // * Arrow key + emacs shortcuts for the query editor
 // * Make scrolling suck less
 // * Switch panels
@@ -71,79 +71,10 @@ fn main() -> Result<(), io::Error> {
     app.render(&mut terminal)?;
     let mut keys = stdin.keys();
     while let Some(c) = keys.next() {
-        let view = &mut app.left;
-        match c? {
+        let c = c?;
+        //
+        match c {
             Key::Esc => break,
-            Key::Down => {
-                if let Some((value_ix, line_ix)) = view.cursor.as_mut() {
-                    let current_value = &view.lines[*value_ix];
-                    if *line_ix == current_value.len() - 1 {
-                        if *value_ix < view.lines.len() - 1 {
-                            *value_ix += 1;
-                            *line_ix = 0;
-                        }
-                    } else {
-                        let line = &current_value[*line_ix];
-                        match line.content {
-                            LineContent::ArrayStart(skipped_lines) if line.folded => {
-                                *line_ix += 2 + skipped_lines;
-                            }
-                            LineContent::ObjectStart(skipped_lines) if line.folded => {
-                                *line_ix += 2 + skipped_lines;
-                            }
-                            _ => {
-                                *line_ix += 1;
-                            }
-                        }
-                    }
-                }
-            }
-            Key::Up => {
-                if let Some((value_ix, line_ix)) = view.cursor.as_mut() {
-                    if *line_ix == 0 {
-                        if *value_ix > 0 {
-                            *value_ix -= 1;
-                            *line_ix = view.lines[*value_ix].len() - 1;
-                        }
-                    } else {
-                        *line_ix -= 1;
-                    }
-                    let line = &view.lines[*value_ix][*line_ix];
-                    if let LineContent::ArrayEnd(skipped_lines)
-                    | LineContent::ObjectEnd(skipped_lines) = line.content
-                    {
-                        let matching_line_ix = *line_ix - 1 - skipped_lines;
-                        let matching_line = &view.lines[*value_ix][matching_line_ix];
-                        if matching_line.folded {
-                            *line_ix = matching_line_ix;
-                        }
-                    }
-                }
-            }
-            Key::Char('j') => {
-                view.scroll += 1;
-            }
-            Key::Char('k') => {
-                view.scroll = view.scroll.saturating_sub(1);
-            }
-            Key::Char('z') => {
-                if let Some((value_ix, line_ix)) = view.cursor.as_mut() {
-                    let line = &mut view.lines[*value_ix][*line_ix];
-                    match line.content {
-                        LineContent::ArrayStart(_) | LineContent::ObjectStart(_) => {
-                            line.folded = !line.folded;
-                        }
-                        LineContent::ArrayEnd(skipped_lines)
-                        | LineContent::ObjectEnd(skipped_lines) => {
-                            *line_ix -= skipped_lines + 1;
-                            let line = &mut view.lines[*value_ix][*line_ix];
-                            assert_eq!(line.folded, false);
-                            line.folded = true;
-                        }
-                        _ => {}
-                    }
-                }
-            }
             Key::Char('q') => {
                 app.new_query = Some(app.query.clone());
                 app.render(&mut terminal)?;
@@ -171,6 +102,82 @@ fn main() -> Result<(), io::Error> {
             }
             _ => {}
         }
+        let view = &mut app.left;
+        match view {
+            View::Error(_) => {}
+            View::Json(view) => match c {
+                Key::Down => {
+                    if let Some((value_ix, line_ix)) = view.cursor.as_mut() {
+                        let current_value = &view.lines[*value_ix];
+                        let line = &current_value[*line_ix];
+                        let new_ix = match line.content {
+                            LineContent::ArrayStart(skipped_lines) if line.folded => {
+                                *line_ix + 2 + skipped_lines
+                            }
+                            LineContent::ObjectStart(skipped_lines) if line.folded => {
+                                *line_ix + 2 + skipped_lines
+                            }
+                            _ => *line_ix + 1,
+                        };
+                        if new_ix == current_value.len() {
+                            if *value_ix < view.lines.len() - 1 {
+                                *value_ix += 1;
+                                *line_ix = 0;
+                            }
+                        } else {
+                            *line_ix = new_ix;
+                        }
+                    }
+                }
+                Key::Up => {
+                    if let Some((value_ix, line_ix)) = view.cursor.as_mut() {
+                        if *line_ix == 0 {
+                            if *value_ix > 0 {
+                                *value_ix -= 1;
+                                *line_ix = view.lines[*value_ix].len() - 1;
+                            }
+                        } else {
+                            *line_ix -= 1;
+                        }
+                        let line = &view.lines[*value_ix][*line_ix];
+                        if let LineContent::ArrayEnd(skipped_lines)
+                        | LineContent::ObjectEnd(skipped_lines) = line.content
+                        {
+                            let matching_line_ix = *line_ix - 1 - skipped_lines;
+                            let matching_line = &view.lines[*value_ix][matching_line_ix];
+                            if matching_line.folded {
+                                *line_ix = matching_line_ix;
+                            }
+                        }
+                    }
+                }
+                Key::Char('j') => {
+                    view.scroll += 1;
+                }
+                Key::Char('k') => {
+                    view.scroll = view.scroll.saturating_sub(1);
+                }
+                Key::Char('z') => {
+                    if let Some((value_ix, line_ix)) = view.cursor.as_mut() {
+                        let line = &mut view.lines[*value_ix][*line_ix];
+                        match line.content {
+                            LineContent::ArrayStart(_) | LineContent::ObjectStart(_) => {
+                                line.folded = !line.folded;
+                            }
+                            LineContent::ArrayEnd(skipped_lines)
+                            | LineContent::ObjectEnd(skipped_lines) => {
+                                *line_ix -= skipped_lines + 1;
+                                let line = &mut view.lines[*value_ix][*line_ix];
+                                assert_eq!(line.folded, false);
+                                line.folded = true;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            },
+        }
         app.render(&mut terminal)?;
     }
     Ok(())
@@ -186,18 +193,45 @@ struct App {
 }
 
 #[derive(Debug, Clone)]
-struct View {
+enum View {
+    Json(JsonView),
+    Error(Vec<String>),
+}
+
+impl View {
+    fn new(values: Vec<Value>) -> Self {
+        View::Json(JsonView::new(values))
+    }
+    fn render(&self, line_limit: u16) -> Paragraph {
+        match self {
+            View::Json(json_view) => json_view.render(line_limit),
+            View::Error(err) => {
+                let err_text = err
+                    .into_iter()
+                    .flat_map(|e| e.split('\n'))
+                    .map(|e| Spans::from(e))
+                    .collect::<Vec<_>>();
+                Paragraph::new(err_text)
+                    .style(Style::default().fg(Color::White).bg(Color::Red))
+                    .alignment(Alignment::Left)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct JsonView {
     scroll: usize,
     values: Vec<Value>,
     lines: Vec<Vec<Line>>,
     cursor: Option<(usize, usize)>,
 }
 
-impl View {
+impl JsonView {
     fn new(values: Vec<Value>) -> Self {
         let lines = json_to_lines(values.iter());
         let cursor = if lines.is_empty() { None } else { Some((0, 0)) };
-        View {
+        JsonView {
             scroll: 0,
             values,
             lines,
@@ -205,7 +239,7 @@ impl View {
         }
     }
     fn render(&self, line_limit: u16) -> Paragraph {
-        let View {
+        let JsonView {
             lines,
             cursor,
             scroll,
@@ -217,11 +251,13 @@ impl View {
             .alignment(Alignment::Left)
         //.wrap(Wrap { trim: false })
     }
-    fn apply_query(&self, query: &str) -> Self {
-        let mut prog = JQ::compile(query).expect("jq compilation error");
-        match run_jq_query(&self.values, &mut prog) {
-            Ok(results) => View::new(results),
-            Err(err) => View::new(vec![Value::String(err)]),
+    fn apply_query(&self, query: &str) -> View {
+        match JQ::compile(query) {
+            Ok(mut prog) => match run_jq_query(&self.values, &mut prog) {
+                Ok(results) => View::Json(JsonView::new(results)),
+                Err(err) => View::Error(vec![err]),
+            },
+            Err(err) => View::Error(err),
         }
     }
 }
@@ -242,7 +278,12 @@ impl App {
         Ok(app)
     }
     fn recompute_right(&mut self) {
-        self.right = Some(self.left.apply_query(&self.query));
+        match &self.left {
+            View::Json(left) => {
+                self.right = Some(left.apply_query(&self.query));
+            }
+            View::Error(_) => {}
+        }
     }
     fn render(&mut self, terminal: &mut Terminal<TermionBackend<Screen>>) -> io::Result<()> {
         let App {
