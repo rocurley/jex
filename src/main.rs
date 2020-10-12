@@ -12,7 +12,7 @@ use tui::{
     backend::TermionBackend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Style},
-    text::{Span, Spans},
+    text::Spans,
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame, Terminal,
 };
@@ -35,8 +35,8 @@ struct Args {
 //     * JV -> Serde: 3.37 sec
 //   * Rendering is fast!
 // * Arrow key + emacs shortcuts for the query editor
-// * Make scrolling suck less
 // * Switch panels
+// * Long strings
 // * Edit tree, instead of 2 fixed panels
 // * Saving
 // * Speed up query serialization:
@@ -118,7 +118,7 @@ fn main() -> Result<(), io::Error> {
                             *i = new_i;
                         }
                         let i = *i; //Return mutable borrow
-                        if !dbg!(view.visible_range(line_limit)).contains(&dbg!(i)) {
+                        if !view.visible_range(line_limit).contains(&i) {
                             view.scroll = next_displayable_line(view.scroll, &view.lines)
                                 .expect("Shouldn't be able to scroll off the bottom");
                         }
