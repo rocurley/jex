@@ -1,7 +1,7 @@
 use argh::FromArgs;
 use cpuprofiler::PROFILER;
 use serde_json::{value::Value, Deserializer};
-use std::{fs, io};
+use std::{fs, io, ops::RangeInclusive};
 use termion::{
     event::Key,
     input::{MouseTerminal, TermRead},
@@ -10,11 +10,11 @@ use termion::{
 };
 use tui::{
     backend::TermionBackend,
-    layout::{Alignment, Constraint, Direction, Layout},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Style},
     text::{Span, Spans},
     widgets::{Block, Borders, Paragraph, Wrap},
-    Terminal,
+    Frame, Terminal,
 };
 #[derive(FromArgs, PartialEq, Debug)]
 /// A command with positional arguments.
@@ -47,8 +47,8 @@ struct Args {
 use jed::{
     jq::{run_jq_query, JQ},
     lines::{
-        json_to_lines, next_displayable_line, prior_displayable_line, render_lines, Line,
-        LineContent,
+        json_to_lines, next_displayable_line, prior_displayable_line, render_lines,
+        renderable_lines, Line, LineContent,
     },
 };
 fn main() -> Result<(), io::Error> {
@@ -106,6 +106,9 @@ fn main() -> Result<(), io::Error> {
             _ => {}
         }
         let view = &mut app.left;
+        let layout = JedLayout::new(&terminal.get_frame());
+        let view_rect = layout.left;
+        let line_limit = view_rect.height.into();
         match view {
             View::Error(_) => {}
             View::Json(view) => match c {
@@ -114,12 +117,22 @@ fn main() -> Result<(), io::Error> {
                         if let Some(new_i) = next_displayable_line(*i, &view.lines) {
                             *i = new_i;
                         }
+                        let i = *i; //Return mutable borrow
+                        if !dbg!(view.visible_range(line_limit)).contains(&dbg!(i)) {
+                            view.scroll = next_displayable_line(view.scroll, &view.lines)
+                                .expect("Shouldn't be able to scroll off the bottom");
+                        }
                     }
                 }
                 Key::Up => {
                     if let Some(i) = view.cursor.as_mut() {
                         if let Some(new_i) = prior_displayable_line(*i, &view.lines) {
                             *i = new_i;
+                        }
+                        let i = *i; //Return mutable borrow
+                        if !view.visible_range(line_limit).contains(&i) {
+                            view.scroll = prior_displayable_line(view.scroll, &view.lines)
+                                .expect("Shouldn't be able to scroll off the bottom");
                         }
                     }
                 }
@@ -232,6 +245,37 @@ impl JsonView {
             Err(err) => View::Error(err),
         }
     }
+    fn visible_range(&self, line_limit: usize) -> RangeInclusive<usize> {
+        let mut lines = renderable_lines(self.scroll, &self.lines);
+        let first = lines.next().expect("Should have at least one line");
+        let last = lines.take(line_limit - 1).last().unwrap_or(first);
+        first..=last
+    }
+}
+
+struct JedLayout {
+    left: Rect,
+    right: Rect,
+    query: Rect,
+}
+
+impl JedLayout {
+    fn new(f: &Frame<TermionBackend<Screen>>) -> JedLayout {
+        let size = f.size();
+        let vchunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(1)].as_ref())
+            .split(size);
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)].as_ref())
+            .split(vchunks[0]);
+        JedLayout {
+            left: chunks[0],
+            right: chunks[1],
+            query: vchunks[1],
+        }
+    }
 }
 
 impl App {
@@ -266,33 +310,25 @@ impl App {
             ..
         } = self;
         terminal.draw(|f| {
-            let size = f.size();
-            let vchunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(0), Constraint::Length(1)].as_ref())
-                .split(size);
-            let chunks = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)].as_ref())
-                .split(vchunks[0]);
+            let layout = JedLayout::new(f);
             let left_block = Block::default().title("Left").borders(Borders::ALL);
-            let left_paragraph = left.render(chunks[0].height).block(left_block);
-            f.render_widget(left_paragraph, chunks[0]);
+            let left_paragraph = left.render(layout.left.height).block(left_block);
+            f.render_widget(left_paragraph, layout.left);
             let right_block = Block::default().title("Right").borders(Borders::ALL);
             match right {
                 Some(right) => {
-                    let right_paragraph = right.render(chunks[1].height).block(right_block);
-                    f.render_widget(right_paragraph, chunks[1]);
+                    let right_paragraph = right.render(layout.right.height).block(right_block);
+                    f.render_widget(right_paragraph, layout.right);
                 }
-                None => f.render_widget(right_block, chunks[1]),
+                None => f.render_widget(right_block, layout.right),
             }
             let query = Paragraph::new(new_query.as_ref().unwrap_or(query).as_str())
                 .alignment(Alignment::Left)
                 .wrap(Wrap { trim: false });
             if let Some(query) = new_query.as_ref() {
-                f.set_cursor(query.len() as u16, vchunks[1].y);
+                f.set_cursor(query.len() as u16, layout.query.y);
             }
-            f.render_widget(query, vchunks[1]);
+            f.render_widget(query, layout.query);
         })
     }
 }

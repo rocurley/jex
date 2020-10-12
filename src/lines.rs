@@ -147,18 +147,179 @@ pub fn render_lines<'a>(
     cursor: Option<usize>,
     lines: &'a [Line],
 ) -> Vec<Spans<'a>> {
-    JsonText {
+    renderable_lines(scroll, lines)
+        .take(line_limit as usize)
+        .map(|i| render_line(i, cursor, lines))
+        .collect()
+}
+
+pub fn renderable_lines<'a>(scroll: usize, lines: &'a [Line]) -> impl Iterator<Item = usize> + 'a {
+    RenderableLines {
         lines,
-        cursor,
         i: if scroll < lines.len() {
             Some(scroll)
         } else {
             None
         },
     }
-    .take(line_limit as usize)
-    .map(Spans::from)
-    .collect()
+}
+
+struct RenderableLines<'a> {
+    lines: &'a [Line],
+    i: Option<usize>,
+}
+
+impl<'a> Iterator for RenderableLines<'a> {
+    type Item = usize;
+    fn next(&mut self) -> Option<usize> {
+        let out = self.i;
+        self.i = self.i.and_then(|i| next_displayable_line(i, self.lines));
+        out
+    }
+}
+
+fn render_line<'a>(i: usize, cursor: Option<usize>, lines: &'a [Line]) -> Spans<'a> {
+    let line = &lines[i];
+    let next = lines.get(i + 1);
+    let has_comma = match next {
+        None => false,
+        Some(line) => !line.is_closing(),
+    };
+    let indent_span = Span::raw("  ".repeat(line.indent));
+    let mut out = match &line.key {
+        Some(key) => vec![
+            indent_span,
+            Span::raw(format!("{:?}", key)),
+            Span::raw(" : "),
+        ],
+        _ => vec![indent_span],
+    };
+    let style = if Some(i) == cursor {
+        Style::default().bg(Color::Blue)
+    } else {
+        Style::default()
+    };
+    match line {
+        Line {
+            content: LineContent::ValueTerminator,
+            ..
+        } => {
+            panic!("Shouldn't be trying to render a ValueTerminator");
+        }
+        Line {
+            content: LineContent::Null,
+            ..
+        } => {
+            out.push(Span::styled("null", style));
+            if has_comma {
+                out.push(Span::raw(","));
+            }
+        }
+        Line {
+            content: LineContent::String(s),
+            ..
+        } => {
+            out.push(Span::styled(format!("{:?}", s), style));
+            if has_comma {
+                out.push(Span::raw(","));
+            }
+        }
+        Line {
+            content: LineContent::Bool(b),
+            ..
+        } => {
+            out.push(Span::styled(b.to_string(), style));
+            if has_comma {
+                out.push(Span::raw(","));
+            }
+        }
+        Line {
+            content: LineContent::Number(x),
+            ..
+        } => {
+            out.push(Span::styled(x.to_string(), style));
+            if has_comma {
+                out.push(Span::raw(","));
+            }
+        }
+        Line {
+            content: LineContent::ArrayStart(skipped_lines),
+            folded: true,
+            ..
+        } => {
+            out.push(Span::styled("[...]", style));
+            if has_comma {
+                out.push(Span::raw(","));
+            }
+            out.push(Span::styled(
+                format!(" ({} lines)", skipped_lines),
+                Style::default().add_modifier(Modifier::DIM),
+            ));
+        }
+        Line {
+            content: LineContent::ArrayEnd(_),
+            folded: true,
+            ..
+        } => {
+            panic!("Attempted to print close of folded array");
+        }
+        Line {
+            content: LineContent::ArrayStart(_),
+            folded: false,
+            ..
+        } => {
+            out.push(Span::styled("[", style));
+        }
+        Line {
+            content: LineContent::ArrayEnd(_),
+            folded: false,
+            ..
+        } => {
+            out.push(Span::styled("]", style));
+            if has_comma {
+                out.push(Span::raw(","));
+            }
+        }
+        Line {
+            content: LineContent::ObjectStart(skipped_lines),
+            folded: true,
+            ..
+        } => {
+            out.push(Span::styled("{...}", style));
+            if has_comma {
+                out.push(Span::raw(","));
+            }
+            out.push(Span::styled(
+                format!(" ({} lines)", skipped_lines),
+                Style::default().add_modifier(Modifier::DIM),
+            ));
+        }
+        Line {
+            content: LineContent::ObjectEnd(_),
+            folded: true,
+            ..
+        } => {
+            panic!("Attempted to print close of folded array");
+        }
+        Line {
+            content: LineContent::ObjectStart(_),
+            folded: false,
+            ..
+        } => {
+            out.push(Span::styled("{", style));
+        }
+        Line {
+            content: LineContent::ObjectEnd(_),
+            folded: false,
+            ..
+        } => {
+            out.push(Span::styled("}", style));
+            if has_comma {
+                out.push(Span::raw(","));
+            }
+        }
+    };
+    Spans::from(out)
 }
 
 struct JsonText<'a> {
