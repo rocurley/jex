@@ -15,7 +15,7 @@ pub struct Line {
 impl Line {
     fn is_closing(&self) -> bool {
         match self.content {
-            LineContent::ArrayStart(_) => true,
+            LineContent::ArrayEnd(_) => true,
             LineContent::ObjectEnd(_) => true,
             _ => false,
         }
@@ -166,7 +166,7 @@ impl<'a> Iterator for JsonText<'a> {
         let next = self.lines.get(self.i + 1);
         let has_comma = match next {
             None => false,
-            Some(line) => line.is_closing(),
+            Some(line) => !line.is_closing(),
         };
         let indent_span = Span::raw("  ".repeat(line.indent));
         let mut out = match &line.key {
@@ -253,6 +253,9 @@ impl<'a> Iterator for JsonText<'a> {
                 ..
             } => {
                 out.push(Span::styled("]", style));
+                if has_comma {
+                    out.push(Span::raw(","));
+                }
             }
             Line {
                 content: LineContent::ObjectStart(skipped_lines),
@@ -288,6 +291,9 @@ impl<'a> Iterator for JsonText<'a> {
                 ..
             } => {
                 out.push(Span::styled("}", style));
+                if has_comma {
+                    out.push(Span::raw(","));
+                }
             }
         };
         self.i += line.next_displayed_offset();
