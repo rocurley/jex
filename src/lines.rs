@@ -17,23 +17,47 @@ impl Line {
         match self.content {
             LineContent::ArrayEnd(_) => true,
             LineContent::ObjectEnd(_) => true,
+            LineContent::ValueTerminator => true,
             _ => false,
         }
     }
-    fn next_displayed_offset(&self) -> usize {
-        match self {
-            Line {
-                content: LineContent::ArrayStart(lines_skipped),
-                folded: true,
-                ..
-            } => lines_skipped + 2,
-            Line {
-                content: LineContent::ObjectStart(lines_skipped),
-                folded: true,
-                ..
-            } => lines_skipped + 2,
-            _ => 1,
+}
+
+pub fn prior_displayable_line(mut i: usize, lines: &[Line]) -> Option<usize> {
+    i = i.checked_sub(1)?;
+    match &lines[i].content {
+        LineContent::ArrayEnd(lines_skipped) | LineContent::ObjectEnd(lines_skipped) => {
+            let matching_i = i - 1 - lines_skipped;
+            if lines[matching_i].folded {
+                Some(matching_i)
+            } else {
+                Some(i)
+            }
         }
+        LineContent::ValueTerminator => prior_displayable_line(i, lines),
+        _ => Some(i),
+    }
+}
+
+pub fn next_displayable_line(i: usize, lines: &[Line]) -> Option<usize> {
+    let delta = match lines[i] {
+        Line {
+            content: LineContent::ArrayStart(lines_skipped),
+            folded: true,
+            ..
+        } => lines_skipped + 2,
+        Line {
+            content: LineContent::ObjectStart(lines_skipped),
+            folded: true,
+            ..
+        } => lines_skipped + 2,
+        _ => 1,
+    };
+    let new_i = i + delta;
+    if let LineContent::ValueTerminator = lines.get(new_i)?.content {
+        next_displayable_line(new_i, lines)
+    } else {
+        Some(new_i)
     }
 }
 
@@ -47,15 +71,16 @@ pub enum LineContent {
     ArrayEnd(usize),
     ObjectStart(usize),
     ObjectEnd(usize),
+    ValueTerminator,
 }
 
-pub fn json_to_lines<'a, I: Iterator<Item = &'a Value>>(vs: I) -> Vec<Vec<Line>> {
-    vs.map(|value| {
-        let mut out = Vec::new();
+pub fn json_to_lines<'a, I: Iterator<Item = &'a Value>>(vs: I) -> Vec<Line> {
+    let mut out = Vec::new();
+    for value in vs {
         json_to_lines_inner(None, value, 0, &mut out);
-        out
-    })
-    .collect()
+        push_line(None, LineContent::ValueTerminator, 0, &mut out);
+    }
+    out
 }
 
 fn push_line(key: Option<String>, content: LineContent, indent: usize, out: &mut Vec<Line>) {
@@ -117,53 +142,36 @@ fn json_to_lines_inner(
 }
 
 pub fn render_lines<'a>(
-    mut scroll: usize,
-    mut line_limit: u16,
-    cursor: &'a Option<(usize, usize)>,
-    lines: &'a [Vec<Line>],
+    scroll: usize,
+    line_limit: u16,
+    cursor: Option<usize>,
+    lines: &'a [Line],
 ) -> Vec<Spans<'a>> {
-    let mut out = Vec::with_capacity(line_limit.into());
-    for (i, value_lines) in lines.iter().enumerate() {
-        if value_lines.len() <= scroll {
-            scroll -= value_lines.len();
-            continue;
-        }
-        let cursor = cursor.and_then(
-            |(value_ix, line_ix)| {
-                if value_ix == i {
-                    Some(line_ix)
-                } else {
-                    None
-                }
-            },
-        );
-        let value_lines = JsonText {
-            lines: value_lines,
-            cursor,
-            i: scroll,
-        };
-        for line in value_lines.take(line_limit.into()) {
-            out.push(Spans::from(line));
-            line_limit -= 1;
-        }
-        scroll = 0;
-        if line_limit == 0 {
-            return out;
-        }
+    JsonText {
+        lines,
+        cursor,
+        i: if scroll < lines.len() {
+            Some(scroll)
+        } else {
+            None
+        },
     }
-    out
+    .take(line_limit as usize)
+    .map(Spans::from)
+    .collect()
 }
 
 struct JsonText<'a> {
     lines: &'a [Line],
     cursor: Option<usize>,
-    i: usize,
+    i: Option<usize>,
 }
 impl<'a> Iterator for JsonText<'a> {
     type Item = Vec<Span<'a>>;
     fn next(&mut self) -> Option<Vec<Span<'a>>> {
-        let line = self.lines.get(self.i)?;
-        let next = self.lines.get(self.i + 1);
+        let i = self.i?;
+        let line = &self.lines[i];
+        let next = self.lines.get(i + 1);
         let has_comma = match next {
             None => false,
             Some(line) => !line.is_closing(),
@@ -177,12 +185,18 @@ impl<'a> Iterator for JsonText<'a> {
             ],
             _ => vec![indent_span],
         };
-        let style = if Some(self.i) == self.cursor {
+        let style = if Some(i) == self.cursor {
             Style::default().bg(Color::Blue)
         } else {
             Style::default()
         };
         match line {
+            Line {
+                content: LineContent::ValueTerminator,
+                ..
+            } => {
+                panic!("Shouldn't be trying to render a ValueTerminator");
+            }
             Line {
                 content: LineContent::Null,
                 ..
@@ -296,7 +310,7 @@ impl<'a> Iterator for JsonText<'a> {
                 }
             }
         };
-        self.i += line.next_displayed_offset();
+        self.i = next_displayable_line(i, &self.lines);
         Some(out)
     }
 }

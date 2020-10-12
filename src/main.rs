@@ -46,7 +46,10 @@ struct Args {
 // Start with round trip between serde and jq, save jq -> lines for an optimization.
 use jed::{
     jq::{run_jq_query, JQ},
-    lines::{json_to_lines, render_lines, Line, LineContent},
+    lines::{
+        json_to_lines, next_displayable_line, prior_displayable_line, render_lines, Line,
+        LineContent,
+    },
 };
 fn main() -> Result<(), io::Error> {
     let args: Args = argh::from_env();
@@ -107,47 +110,16 @@ fn main() -> Result<(), io::Error> {
             View::Error(_) => {}
             View::Json(view) => match c {
                 Key::Down => {
-                    if let Some((value_ix, line_ix)) = view.cursor.as_mut() {
-                        let current_value = &view.lines[*value_ix];
-                        let line = &current_value[*line_ix];
-                        let new_ix = match line.content {
-                            LineContent::ArrayStart(skipped_lines) if line.folded => {
-                                *line_ix + 2 + skipped_lines
-                            }
-                            LineContent::ObjectStart(skipped_lines) if line.folded => {
-                                *line_ix + 2 + skipped_lines
-                            }
-                            _ => *line_ix + 1,
-                        };
-                        if new_ix == current_value.len() {
-                            if *value_ix < view.lines.len() - 1 {
-                                *value_ix += 1;
-                                *line_ix = 0;
-                            }
-                        } else {
-                            *line_ix = new_ix;
+                    if let Some(i) = view.cursor.as_mut() {
+                        if let Some(new_i) = next_displayable_line(*i, &view.lines) {
+                            *i = new_i;
                         }
                     }
                 }
                 Key::Up => {
-                    if let Some((value_ix, line_ix)) = view.cursor.as_mut() {
-                        if *line_ix == 0 {
-                            if *value_ix > 0 {
-                                *value_ix -= 1;
-                                *line_ix = view.lines[*value_ix].len() - 1;
-                            }
-                        } else {
-                            *line_ix -= 1;
-                        }
-                        let line = &view.lines[*value_ix][*line_ix];
-                        if let LineContent::ArrayEnd(skipped_lines)
-                        | LineContent::ObjectEnd(skipped_lines) = line.content
-                        {
-                            let matching_line_ix = *line_ix - 1 - skipped_lines;
-                            let matching_line = &view.lines[*value_ix][matching_line_ix];
-                            if matching_line.folded {
-                                *line_ix = matching_line_ix;
-                            }
+                    if let Some(i) = view.cursor.as_mut() {
+                        if let Some(new_i) = prior_displayable_line(*i, &view.lines) {
+                            *i = new_i;
                         }
                     }
                 }
@@ -158,16 +130,16 @@ fn main() -> Result<(), io::Error> {
                     view.scroll = view.scroll.saturating_sub(1);
                 }
                 Key::Char('z') => {
-                    if let Some((value_ix, line_ix)) = view.cursor.as_mut() {
-                        let line = &mut view.lines[*value_ix][*line_ix];
+                    if let Some(i) = view.cursor.as_mut() {
+                        let line = &mut view.lines[*i];
                         match line.content {
                             LineContent::ArrayStart(_) | LineContent::ObjectStart(_) => {
                                 line.folded = !line.folded;
                             }
                             LineContent::ArrayEnd(skipped_lines)
                             | LineContent::ObjectEnd(skipped_lines) => {
-                                *line_ix -= skipped_lines + 1;
-                                let line = &mut view.lines[*value_ix][*line_ix];
+                                *i -= skipped_lines + 1;
+                                let line = &mut view.lines[*i];
                                 assert_eq!(line.folded, false);
                                 line.folded = true;
                             }
@@ -223,14 +195,14 @@ impl View {
 struct JsonView {
     scroll: usize,
     values: Vec<Value>,
-    lines: Vec<Vec<Line>>,
-    cursor: Option<(usize, usize)>,
+    lines: Vec<Line>,
+    cursor: Option<usize>,
 }
 
 impl JsonView {
     fn new(values: Vec<Value>) -> Self {
         let lines = json_to_lines(values.iter());
-        let cursor = if lines.is_empty() { None } else { Some((0, 0)) };
+        let cursor = if lines.is_empty() { None } else { Some(0) };
         JsonView {
             scroll: 0,
             values,
@@ -245,7 +217,7 @@ impl JsonView {
             scroll,
             ..
         } = self;
-        let text = render_lines(*scroll, line_limit, cursor, lines);
+        let text = render_lines(*scroll, line_limit, *cursor, lines);
         Paragraph::new(text)
             .style(Style::default().fg(Color::White).bg(Color::Black))
             .alignment(Alignment::Left)
