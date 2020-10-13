@@ -317,6 +317,64 @@ fn render_line<'a>(i: usize, cursor: Option<usize>, lines: &'a [Line]) -> Spans<
     Spans::from(out)
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct MemoryStats {
+    pub null: usize,
+    pub bool: usize,
+    pub number: usize,
+    pub string: StringMemoryStats,
+    pub array_start: usize,
+    pub array_end: usize,
+    pub object_start: usize,
+    pub object_end: usize,
+    pub value_terminator: usize,
+
+    pub key: StringMemoryStats,
+}
+
+impl MemoryStats {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn log(&mut self, l: &Line) {
+        if let Some(key) = &l.key {
+            self.key.log(key)
+        }
+        use LineContent::*;
+        match &l.content {
+            Null => self.null += 1,
+            Bool(_) => self.bool += 1,
+            Number(_) => self.number += 1,
+            String(s) => self.string.log(s),
+            ArrayStart(_) => self.array_start += 1,
+            ArrayEnd(_) => self.array_end += 1,
+            ObjectStart(_) => self.object_start += 1,
+            ObjectEnd(_) => self.object_end += 1,
+            ValueTerminator => self.value_terminator += 1,
+        }
+    }
+    pub fn from_lines(lines: &[Line]) -> Self {
+        let mut out = Self::new();
+        for line in lines {
+            out.log(line)
+        }
+        out
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct StringMemoryStats {
+    pub count: usize,
+    pub string_bytes: usize,
+}
+
+impl StringMemoryStats {
+    pub fn log(&mut self, s: &str) {
+        self.count += 1;
+        self.string_bytes += s.as_bytes().len();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::lines::{Line, LineContent};

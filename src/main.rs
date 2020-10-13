@@ -16,15 +16,46 @@ use tui::{
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame, Terminal,
 };
+
+use jed::{
+    jq::{run_jq_query, JQ},
+    lines::{
+        json_to_lines, next_displayable_line, prior_displayable_line, render_lines,
+        renderable_lines, Line, LineContent, MemoryStats,
+    },
+};
+use prettytable::{cell, ptable, row, table, Table};
+
 #[derive(FromArgs, PartialEq, Debug)]
 /// A command with positional arguments.
 struct Args {
+    #[argh(subcommand)]
+    mode: Mode,
     #[argh(positional)]
     json_path: String,
-
-    #[argh(switch, description = "load the file and then quit")]
-    bench: bool,
 }
+
+#[derive(FromArgs, PartialEq, Debug)]
+#[argh(subcommand)]
+enum Mode {
+    Normal(NormalMode),
+    Bench(BenchMode),
+    Memory(MemoryMode),
+}
+
+#[derive(FromArgs, PartialEq, Debug)]
+/// Run the editor
+#[argh(subcommand, name = "load")]
+struct NormalMode {}
+#[derive(FromArgs, PartialEq, Debug)]
+/// Benchmark loading a json file
+#[argh(subcommand, name = "bench")]
+struct BenchMode {}
+#[derive(FromArgs, PartialEq, Debug)]
+/// Break down memory usage from loading a json file
+#[argh(subcommand, name = "memory")]
+struct MemoryMode {}
+
 // TODO
 // * Large file perf (181 mb): 13.68 sec
 //   * Initial parsing (serde): 3.77 sec
@@ -34,6 +65,7 @@ struct Args {
 //     * Computing result: 0???? (it is the trivial filter)
 //     * JV -> Serde: 3.37 sec
 //   * Rendering is fast!
+// * Improve memory estimates of actual json size.
 // * Arrow key + emacs shortcuts for the query editor
 // * Searching
 // * Long strings
@@ -44,28 +76,20 @@ struct Args {
 //   faster than text -> jv).
 //   * Multithreaded serde -> jv
 // Start with round trip between serde and jq, save jq -> lines for an optimization.
-use jed::{
-    jq::{run_jq_query, JQ},
-    lines::{
-        json_to_lines, next_displayable_line, prior_displayable_line, render_lines,
-        renderable_lines, Line, LineContent,
-    },
-};
 fn main() -> Result<(), io::Error> {
     let args: Args = argh::from_env();
-    if args.bench {
-        let mut profiler = PROFILER.lock().unwrap();
-        profiler.start("profile").unwrap();
-    };
+    match args.mode {
+        Mode::Normal(_) => run(args.json_path),
+        Mode::Bench(_) => bench(args.json_path),
+        Mode::Memory(_) => memory(args.json_path),
+    }
+}
+
+fn run(json_path: String) -> Result<(), io::Error> {
     let stdin = io::stdin();
-    let f = fs::File::open(args.json_path)?;
+    let f = fs::File::open(json_path)?;
     let r = io::BufReader::new(f);
     let mut app = App::new(r)?;
-    if args.bench {
-        let mut profiler = PROFILER.lock().unwrap();
-        profiler.stop().unwrap();
-        return Ok(());
-    }
     let stdout = io::stdout().into_raw_mode()?;
     let stdout = MouseTerminal::from(stdout);
     let stdout = AlternateScreen::from(stdout);
@@ -163,6 +187,115 @@ fn main() -> Result<(), io::Error> {
         }
         app.render(&mut terminal)?;
     }
+    Ok(())
+}
+
+fn bench(json_path: String) -> Result<(), io::Error> {
+    let mut profiler = PROFILER.lock().unwrap();
+    profiler.start("profile").unwrap();
+    let f = fs::File::open(json_path)?;
+    let r = io::BufReader::new(f);
+    App::new(r)?;
+    let mut profiler = PROFILER.lock().unwrap();
+    profiler.stop().unwrap();
+    Ok(())
+}
+
+fn percent(num: usize, denom: usize) -> String {
+    format!("{:2.0}%", (num * 100) as f64 / denom as f64)
+}
+
+fn memory(json_path: String) -> Result<(), io::Error> {
+    let f = fs::File::open(json_path)?;
+    let r = io::BufReader::new(f);
+    let app = App::new(r)?;
+    let view = match app.left {
+        View::Json(v) => v,
+        View::Error(_) => panic!("Expected non-error view"),
+    };
+    let memory_stats = MemoryStats::from_lines(&view.lines);
+    let line_size = std::mem::size_of::<Line>();
+    let line_counts = vec![
+        ("Null", memory_stats.null),
+        ("Bool", memory_stats.bool),
+        ("Number", memory_stats.number),
+        ("String", memory_stats.string.count),
+        ("ArrayStart", memory_stats.array_start),
+        ("ArrayEnd", memory_stats.array_end),
+        ("ObjectStart", memory_stats.object_start),
+        ("ObjectEnd", memory_stats.object_end),
+        ("ValueTerminator", memory_stats.value_terminator),
+    ];
+    let lines_count = line_counts.iter().map(|(_, count)| count).sum();
+    let direct_bytes = lines_count * line_size;
+    let indirect_bytes = memory_stats.string.string_bytes + memory_stats.key.string_bytes;
+    let mut direct_table = Table::new();
+    direct_table.add_row(row!["Type", "Count", "Bytes", "Fraction"]);
+    for (ty, count) in &line_counts {
+        direct_table.add_row(row![
+            ty,
+            count,
+            count * line_size,
+            percent(*count, lines_count)
+        ]);
+    }
+    direct_table.add_row(row!["Total", lines_count, direct_bytes, "100%"]);
+    println!(
+        "Direct memory usage {}",
+        percent(direct_bytes, direct_bytes + indirect_bytes)
+    );
+    direct_table.printstd();
+    println!(
+        "Indirect memory usage {}",
+        percent(indirect_bytes, direct_bytes + indirect_bytes)
+    );
+    ptable!(
+        ["Type", "Bytes", "Fraction"],
+        [
+            "String",
+            memory_stats.string.string_bytes,
+            percent(memory_stats.string.string_bytes, indirect_bytes)
+        ],
+        [
+            "Key",
+            memory_stats.key.string_bytes,
+            percent(memory_stats.key.string_bytes, indirect_bytes)
+        ]
+    );
+    let json_bytes = vec![
+        ("Null", memory_stats.null * 4),
+        ("Bool", memory_stats.bool * 4),
+        ("Number", memory_stats.number * 6), //TODO: this is made up!
+        (
+            "String",
+            memory_stats.string.count * 2 + memory_stats.string.string_bytes,
+        ),
+        ("ArrayStart", memory_stats.array_start),
+        ("ArrayEnd", memory_stats.array_end),
+        ("ObjectStart", memory_stats.object_start),
+        ("ObjectEnd", memory_stats.object_end),
+        (
+            "Keys",
+            memory_stats.key.count * 3 + memory_stats.key.string_bytes,
+        ),
+        (
+            "Commas",
+            memory_stats.null + memory_stats.bool + memory_stats.number + memory_stats.string.count
+                - memory_stats.value_terminator,
+        ),
+    ];
+    let total_json_bytes: usize = json_bytes.iter().map(|(_, bytes)| bytes).sum();
+    let mut json_table = Table::new();
+    json_table.add_row(row!["Type", "Count", "Fraction"]);
+    for (ty, bytes) in &json_bytes {
+        json_table.add_row(row![ty, bytes, percent(*bytes, total_json_bytes)]);
+    }
+    json_table.add_row(row!["Total", total_json_bytes, "100%"]);
+    println!(
+        "Original JSON (estimated) {}",
+        percent(total_json_bytes, indirect_bytes + direct_bytes)
+    );
+    json_table.printstd();
     Ok(())
 }
 
