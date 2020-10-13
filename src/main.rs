@@ -35,7 +35,7 @@ struct Args {
 //     * JV -> Serde: 3.37 sec
 //   * Rendering is fast!
 // * Arrow key + emacs shortcuts for the query editor
-// * Switch panels
+// * Searching
 // * Long strings
 // * Edit tree, instead of 2 fixed panels
 // * Saving
@@ -103,15 +103,19 @@ fn main() -> Result<(), io::Error> {
                     }
                 }
             }
+            Key::Char('\t') => app.focus = app.focus.swap(),
             _ => {}
         }
-        let view = &mut app.left;
         let layout = JedLayout::new(&terminal.get_frame());
-        let view_rect = layout.left;
+        let (view, view_rect) = match app.focus {
+            Focus::Left => (Some(&mut app.left), layout.left),
+            Focus::Right => (app.right.as_mut(), layout.right),
+        };
         let line_limit = view_rect.height as usize - 2;
         match view {
-            View::Error(_) => {}
-            View::Json(view) => match c {
+            None => {}
+            Some(View::Error(_)) => {}
+            Some(View::Json(view)) => match c {
                 Key::Down => {
                     if let Some(i) = view.cursor.as_mut() {
                         if let Some(new_i) = next_displayable_line(*i, &view.lines) {
@@ -135,12 +139,6 @@ fn main() -> Result<(), io::Error> {
                                 .expect("Shouldn't be able to scroll off the bottom");
                         }
                     }
-                }
-                Key::Char('j') => {
-                    view.scroll += 1;
-                }
-                Key::Char('k') => {
-                    view.scroll = view.scroll.saturating_sub(1);
                 }
                 Key::Char('z') => {
                     if let Some(i) = view.cursor.as_mut() {
@@ -170,9 +168,25 @@ fn main() -> Result<(), io::Error> {
 
 type Screen = AlternateScreen<MouseTerminal<RawTerminal<io::Stdout>>>;
 
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum Focus {
+    Left,
+    Right,
+}
+
+impl Focus {
+    fn swap(self) -> Self {
+        match self {
+            Focus::Left => Focus::Right,
+            Focus::Right => Focus::Left,
+        }
+    }
+}
+
 struct App {
     left: View,
     right: Option<View>,
+    focus: Focus,
     new_query: Option<String>,
     query: String,
 }
@@ -187,9 +201,9 @@ impl View {
     fn new(values: Vec<Value>) -> Self {
         View::Json(JsonView::new(values))
     }
-    fn render(&self, line_limit: u16) -> Paragraph {
+    fn render(&self, line_limit: u16, has_focus: bool) -> Paragraph {
         match self {
-            View::Json(json_view) => json_view.render(line_limit),
+            View::Json(json_view) => json_view.render(line_limit, has_focus),
             View::Error(err) => {
                 let err_text = err
                     .into_iter()
@@ -223,14 +237,15 @@ impl JsonView {
             cursor,
         }
     }
-    fn render(&self, line_limit: u16) -> Paragraph {
+    fn render(&self, line_limit: u16, has_focus: bool) -> Paragraph {
         let JsonView {
             lines,
             cursor,
             scroll,
             ..
         } = self;
-        let text = render_lines(*scroll, line_limit, *cursor, lines);
+        let cursor = if has_focus { cursor.clone() } else { None };
+        let text = render_lines(*scroll, line_limit, cursor, lines);
         Paragraph::new(text)
             .style(Style::default().fg(Color::White).bg(Color::Black))
             .alignment(Alignment::Left)
@@ -287,6 +302,7 @@ impl App {
         let mut app = App {
             left,
             right: None,
+            focus: Focus::Left,
             new_query: None,
             query: String::new(),
         };
@@ -307,17 +323,22 @@ impl App {
             right,
             query,
             new_query,
+            focus,
             ..
         } = self;
         terminal.draw(|f| {
             let layout = JedLayout::new(f);
             let left_block = Block::default().title("Left").borders(Borders::ALL);
-            let left_paragraph = left.render(layout.left.height).block(left_block);
+            let left_paragraph = left
+                .render(layout.left.height, *focus == Focus::Left)
+                .block(left_block);
             f.render_widget(left_paragraph, layout.left);
             let right_block = Block::default().title("Right").borders(Borders::ALL);
             match right {
                 Some(right) => {
-                    let right_paragraph = right.render(layout.right.height).block(right_block);
+                    let right_paragraph = right
+                        .render(layout.right.height, *focus == Focus::Right)
+                        .block(right_block);
                     f.render_widget(right_paragraph, layout.right);
                 }
                 None => f.render_widget(right_block, layout.right),
