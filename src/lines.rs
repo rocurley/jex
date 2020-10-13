@@ -7,9 +7,9 @@ use tui::{
 #[derive(Debug, Clone)]
 pub struct Line {
     pub content: LineContent,
-    pub key: Option<String>,
+    pub key: Option<Box<str>>,
     pub folded: bool,
-    pub indent: usize,
+    pub indent: u8,
 }
 
 impl Line {
@@ -66,7 +66,7 @@ pub enum LineContent {
     Null,
     Bool(bool),
     Number(Number),
-    String(String),
+    String(Box<str>),
     ArrayStart(usize),
     ArrayEnd(usize),
     ObjectStart(usize),
@@ -83,7 +83,7 @@ pub fn json_to_lines<'a, I: Iterator<Item = &'a Value>>(vs: I) -> Vec<Line> {
     out
 }
 
-fn push_line(key: Option<String>, content: LineContent, indent: usize, out: &mut Vec<Line>) {
+fn push_line(key: Option<Box<str>>, content: LineContent, indent: u8, out: &mut Vec<Line>) {
     let line = Line {
         content,
         key,
@@ -93,12 +93,7 @@ fn push_line(key: Option<String>, content: LineContent, indent: usize, out: &mut
     out.push(line);
 }
 
-fn json_to_lines_inner(
-    key: Option<String>,
-    v: &Value,
-    indent: usize,
-    out: &mut Vec<Line>,
-) -> usize {
+fn json_to_lines_inner(key: Option<Box<str>>, v: &Value, indent: u8, out: &mut Vec<Line>) -> usize {
     match v {
         Value::Null => {
             push_line(key, LineContent::Null, indent, out);
@@ -113,7 +108,7 @@ fn json_to_lines_inner(
             1
         }
         Value::String(s) => {
-            push_line(key, LineContent::String(s.clone()), indent, out);
+            push_line(key, LineContent::String(s.as_str().into()), indent, out);
             1
         }
         Value::Array(xs) => {
@@ -132,7 +127,7 @@ fn json_to_lines_inner(
             let start_position = out.len();
             push_line(key, LineContent::ObjectStart(0), indent, out);
             for (k, x) in xs.iter() {
-                count += json_to_lines_inner(Some(k.clone()), x, indent + 1, out);
+                count += json_to_lines_inner(Some(k.as_str().into()), x, indent + 1, out);
             }
             push_line(None, LineContent::ObjectEnd(count), indent, out);
             out[start_position].content = LineContent::ObjectStart(count);
@@ -185,7 +180,7 @@ fn render_line<'a>(i: usize, cursor: Option<usize>, lines: &'a [Line]) -> Spans<
         None => false,
         Some(line) => !line.is_closing(),
     };
-    let indent_span = Span::raw("  ".repeat(line.indent));
+    let indent_span = Span::raw("  ".repeat(line.indent as usize));
     let mut out = match &line.key {
         Some(key) => vec![
             indent_span,
@@ -337,7 +332,7 @@ impl<'a> Iterator for JsonText<'a> {
             None => false,
             Some(line) => !line.is_closing(),
         };
-        let indent_span = Span::raw("  ".repeat(line.indent));
+        let indent_span = Span::raw("  ".repeat(line.indent as usize));
         let mut out = match &line.key {
             Some(key) => vec![
                 indent_span,
@@ -473,5 +468,22 @@ impl<'a> Iterator for JsonText<'a> {
         };
         self.i = next_displayable_line(i, &self.lines);
         Some(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::lines::{Line, LineContent};
+    use serde_json::value::Number;
+    use std::mem::size_of;
+    #[test]
+    fn test_size() {
+        dbg!(size_of::<Line>());
+        dbg!(size_of::<LineContent>());
+        dbg!(size_of::<Option<String>>());
+        dbg!(size_of::<Option<Box<str>>>());
+        dbg!(size_of::<usize>());
+        dbg!(size_of::<Number>());
+        panic!("Print!");
     }
 }
