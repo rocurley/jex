@@ -319,17 +319,17 @@ fn render_line<'a>(i: usize, cursor: Option<usize>, lines: &'a [Line]) -> Spans<
 
 #[derive(Debug, Clone, Default)]
 pub struct MemoryStats {
-    pub null: usize,
-    pub bool: usize,
-    pub number: usize,
-    pub string: StringMemoryStats,
-    pub array_start: usize,
-    pub array_end: usize,
-    pub object_start: usize,
-    pub object_end: usize,
-    pub value_terminator: usize,
+    pub null: MemoryStat,
+    pub bool: MemoryStat,
+    pub number: MemoryStat,
+    pub string: MemoryStat,
+    pub array_start: MemoryStat,
+    pub array_end: MemoryStat,
+    pub object_start: MemoryStat,
+    pub object_end: MemoryStat,
+    pub value_terminator: MemoryStat,
 
-    pub key: StringMemoryStats,
+    pub key: MemoryStat,
 }
 
 impl MemoryStats {
@@ -338,19 +338,81 @@ impl MemoryStats {
     }
     pub fn log(&mut self, l: &Line) {
         if let Some(key) = &l.key {
-            self.key.log(key)
+            let json_size = Value::String(key.to_string()).to_string().as_bytes().len() + 3;
+            self.key += MemoryStat {
+                count: 0,
+                json_size,
+                indirect_bytes: key.as_bytes().len(),
+            }
         }
         use LineContent::*;
         match &l.content {
-            Null => self.null += 1,
-            Bool(_) => self.bool += 1,
-            Number(_) => self.number += 1,
-            String(s) => self.string.log(s),
-            ArrayStart(_) => self.array_start += 1,
-            ArrayEnd(_) => self.array_end += 1,
-            ObjectStart(_) => self.object_start += 1,
-            ObjectEnd(_) => self.object_end += 1,
-            ValueTerminator => self.value_terminator += 1,
+            Null => {
+                self.null += MemoryStat {
+                    count: 1,
+                    json_size: 4,
+                    indirect_bytes: 0,
+                }
+            }
+            Bool(b) => {
+                let json_size = if *b { 4 } else { 5 };
+                self.bool += MemoryStat {
+                    count: 1,
+                    json_size,
+                    indirect_bytes: 0,
+                }
+            }
+            Number(n) => {
+                let json_size = n.to_string().len();
+                self.number += MemoryStat {
+                    count: 1,
+                    json_size,
+                    indirect_bytes: 0,
+                }
+            }
+            String(s) => {
+                let json_size = Value::String(s.to_string()).to_string().as_bytes().len() + 2;
+                self.string += MemoryStat {
+                    count: 1,
+                    json_size,
+                    indirect_bytes: s.as_bytes().len(),
+                }
+            }
+            ArrayStart(_) => {
+                self.array_start += MemoryStat {
+                    count: 1,
+                    json_size: 1,
+                    indirect_bytes: 0,
+                }
+            }
+            ArrayEnd(_) => {
+                self.array_end += MemoryStat {
+                    count: 1,
+                    json_size: 1,
+                    indirect_bytes: 0,
+                }
+            }
+            ObjectStart(_) => {
+                self.object_start += MemoryStat {
+                    count: 1,
+                    json_size: 1,
+                    indirect_bytes: 0,
+                }
+            }
+            ObjectEnd(_) => {
+                self.object_end += MemoryStat {
+                    count: 1,
+                    json_size: 1,
+                    indirect_bytes: 0,
+                }
+            }
+            ValueTerminator => {
+                self.value_terminator += MemoryStat {
+                    count: 1,
+                    json_size: 1,
+                    indirect_bytes: 0,
+                }
+            }
         }
     }
     pub fn from_lines(lines: &[Line]) -> Self {
@@ -358,20 +420,22 @@ impl MemoryStats {
         for line in lines {
             out.log(line)
         }
+        out.value_terminator.json_size -= 1;
         out
     }
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct StringMemoryStats {
+#[derive(Debug, Clone, Default, Copy)]
+pub struct MemoryStat {
     pub count: usize,
-    pub string_bytes: usize,
+    pub json_size: usize,
+    pub indirect_bytes: usize,
 }
-
-impl StringMemoryStats {
-    pub fn log(&mut self, s: &str) {
-        self.count += 1;
-        self.string_bytes += s.as_bytes().len();
+impl std::ops::AddAssign for MemoryStat {
+    fn add_assign(&mut self, other: Self) {
+        self.count += other.count;
+        self.json_size += other.json_size;
+        self.indirect_bytes += other.indirect_bytes;
     }
 }
 

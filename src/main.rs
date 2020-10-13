@@ -21,7 +21,7 @@ use jed::{
     jq::{run_jq_query, JQ},
     lines::{
         json_to_lines, next_displayable_line, prior_displayable_line, render_lines,
-        renderable_lines, Line, LineContent, MemoryStats,
+        renderable_lines, Line, LineContent, MemoryStat, MemoryStats,
     },
 };
 use prettytable::{cell, ptable, row, table, Table};
@@ -215,85 +215,92 @@ fn memory(json_path: String) -> Result<(), io::Error> {
     };
     let memory_stats = MemoryStats::from_lines(&view.lines);
     let line_size = std::mem::size_of::<Line>();
-    let line_counts = vec![
+    let mut line_stats = vec![
         ("Null", memory_stats.null),
         ("Bool", memory_stats.bool),
         ("Number", memory_stats.number),
-        ("String", memory_stats.string.count),
+        ("String", memory_stats.string),
         ("ArrayStart", memory_stats.array_start),
         ("ArrayEnd", memory_stats.array_end),
         ("ObjectStart", memory_stats.object_start),
         ("ObjectEnd", memory_stats.object_end),
         ("ValueTerminator", memory_stats.value_terminator),
+        ("Key", memory_stats.key),
     ];
-    let lines_count = line_counts.iter().map(|(_, count)| count).sum();
-    let direct_bytes = lines_count * line_size;
-    let indirect_bytes = memory_stats.string.string_bytes + memory_stats.key.string_bytes;
+    let comma_count = memory_stats.null.count
+        + memory_stats.bool.count
+        + memory_stats.number.count
+        + memory_stats.string.count
+        - memory_stats.value_terminator.count;
+    line_stats.push((
+        "Comma",
+        MemoryStat {
+            count: comma_count,
+            indirect_bytes: 0,
+            json_size: comma_count,
+        },
+    ));
+    let mut lines_total = MemoryStat::default();
+    for (_, stat) in line_stats.iter() {
+        lines_total += *stat;
+    }
+    line_stats.push(("Total", lines_total));
     let mut direct_table = Table::new();
     direct_table.add_row(row!["Type", "Count", "Bytes", "Fraction"]);
-    for (ty, count) in &line_counts {
+    for (ty, stat) in &line_stats {
         direct_table.add_row(row![
             ty,
-            count,
-            count * line_size,
-            percent(*count, lines_count)
+            stat.count,
+            stat.count * line_size,
+            percent(stat.count, lines_total.count)
         ]);
     }
-    direct_table.add_row(row!["Total", lines_count, direct_bytes, "100%"]);
     println!(
         "Direct memory usage {}",
-        percent(direct_bytes, direct_bytes + indirect_bytes)
+        percent(
+            lines_total.count * line_size,
+            lines_total.count * line_size + lines_total.indirect_bytes
+        )
     );
     direct_table.printstd();
     println!(
         "Indirect memory usage {}",
-        percent(indirect_bytes, direct_bytes + indirect_bytes)
+        percent(
+            lines_total.indirect_bytes,
+            lines_total.count * line_size + lines_total.indirect_bytes
+        )
     );
     ptable!(
         ["Type", "Bytes", "Fraction"],
         [
             "String",
-            memory_stats.string.string_bytes,
-            percent(memory_stats.string.string_bytes, indirect_bytes)
+            memory_stats.string.indirect_bytes,
+            percent(
+                memory_stats.string.indirect_bytes,
+                lines_total.indirect_bytes
+            )
         ],
         [
             "Key",
-            memory_stats.key.string_bytes,
-            percent(memory_stats.key.string_bytes, indirect_bytes)
+            memory_stats.string.indirect_bytes,
+            percent(memory_stats.key.indirect_bytes, lines_total.indirect_bytes)
         ]
     );
-    let json_bytes = vec![
-        ("Null", memory_stats.null * 4),
-        ("Bool", memory_stats.bool * 4),
-        ("Number", memory_stats.number * 6), //TODO: this is made up!
-        (
-            "String",
-            memory_stats.string.count * 2 + memory_stats.string.string_bytes,
-        ),
-        ("ArrayStart", memory_stats.array_start),
-        ("ArrayEnd", memory_stats.array_end),
-        ("ObjectStart", memory_stats.object_start),
-        ("ObjectEnd", memory_stats.object_end),
-        (
-            "Keys",
-            memory_stats.key.count * 3 + memory_stats.key.string_bytes,
-        ),
-        (
-            "Commas",
-            memory_stats.null + memory_stats.bool + memory_stats.number + memory_stats.string.count
-                - memory_stats.value_terminator,
-        ),
-    ];
-    let total_json_bytes: usize = json_bytes.iter().map(|(_, bytes)| bytes).sum();
     let mut json_table = Table::new();
-    json_table.add_row(row!["Type", "Count", "Fraction"]);
-    for (ty, bytes) in &json_bytes {
-        json_table.add_row(row![ty, bytes, percent(*bytes, total_json_bytes)]);
+    json_table.add_row(row!["Type", "Bytes", "Fraction"]);
+    for (ty, stat) in &line_stats {
+        json_table.add_row(row![
+            ty,
+            stat.json_size,
+            percent(stat.json_size, lines_total.json_size)
+        ]);
     }
-    json_table.add_row(row!["Total", total_json_bytes, "100%"]);
     println!(
         "Original JSON (estimated) {}",
-        percent(total_json_bytes, indirect_bytes + direct_bytes)
+        percent(
+            lines_total.json_size,
+            lines_total.count * line_size + lines_total.indirect_bytes
+        )
     );
     json_table.printstd();
     Ok(())
