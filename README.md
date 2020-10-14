@@ -6,7 +6,7 @@ Jed is an interactive tool for querying json files. It shows a json file in one 
 Installing
 ----------
 
-First, you need to have cargo, the rust package and build manager installed. You can install it by following the instructions at [rustup.rs](rustup.rs).
+First, you need to have cargo, the rust package and build manager installed. You can install it by following the instructions at [rustup.rs](https://rustup.rs).
 
 Once you have cargo installed, you can build and install jed by running `cargo install --path .`
 
