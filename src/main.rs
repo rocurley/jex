@@ -1,5 +1,4 @@
 use argh::FromArgs;
-use cpuprofiler::PROFILER;
 use serde_json::{value::Value, Deserializer};
 use std::{fs, io, ops::RangeInclusive};
 use termion::{
@@ -17,18 +16,24 @@ use tui::{
     Frame, Terminal,
 };
 
+#[cfg(feature = "dev-tools")]
+use cpuprofiler::PROFILER;
+#[cfg(feature = "dev-tools")]
+use jed::lines::memory::{MemoryStat, MemoryStats};
 use jed::{
     jq::{run_jq_query, JQ},
     lines::{
         json_to_lines, next_displayable_line, prior_displayable_line, render_lines,
-        renderable_lines, Line, LineContent, MemoryStat, MemoryStats,
+        renderable_lines, Line, LineContent,
     },
 };
+#[cfg(feature = "dev-tools")]
 use prettytable::{cell, ptable, row, table, Table};
 
 #[derive(FromArgs, PartialEq, Debug)]
-/// A command with positional arguments.
+/// Json viewer and editor
 struct Args {
+    #[cfg(feature = "dev-tools")]
     #[argh(subcommand)]
     mode: Mode,
     #[argh(positional)]
@@ -76,6 +81,7 @@ struct MemoryMode {}
 //   faster than text -> jv).
 //   * Multithreaded serde -> jv
 // Start with round trip between serde and jq, save jq -> lines for an optimization.
+#[cfg(feature = "dev-tools")]
 fn main() -> Result<(), io::Error> {
     let args: Args = argh::from_env();
     match args.mode {
@@ -83,6 +89,12 @@ fn main() -> Result<(), io::Error> {
         Mode::Bench(_) => bench(args.json_path),
         Mode::Memory(_) => memory(args.json_path),
     }
+}
+
+#[cfg(not(feature = "dev-tools"))]
+fn main() -> Result<(), io::Error> {
+    let args: Args = argh::from_env();
+    run(args.json_path)
 }
 
 fn run(json_path: String) -> Result<(), io::Error> {
@@ -190,6 +202,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
     Ok(())
 }
 
+#[cfg(feature = "dev-tools")]
 fn bench(json_path: String) -> Result<(), io::Error> {
     let mut profiler = PROFILER.lock().unwrap();
     profiler.start("profile").unwrap();
@@ -201,10 +214,12 @@ fn bench(json_path: String) -> Result<(), io::Error> {
     Ok(())
 }
 
+#[cfg(feature = "dev-tools")]
 fn percent(num: usize, denom: usize) -> String {
     format!("{:2.0}%", (num * 100) as f64 / denom as f64)
 }
 
+#[cfg(feature = "dev-tools")]
 fn memory(json_path: String) -> Result<(), io::Error> {
     let f = fs::File::open(json_path)?;
     let r = io::BufReader::new(f);
