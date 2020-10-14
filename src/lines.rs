@@ -318,7 +318,7 @@ fn render_line<'a>(i: usize, cursor: Option<usize>, lines: &'a [Line]) -> Spans<
 }
 
 #[cfg(feature = "dev-tools")]
-mod memory {
+pub mod memory {
     use super::{Line, LineContent};
     use serde_json::Value;
     #[derive(Debug, Clone, Default)]
@@ -342,7 +342,7 @@ mod memory {
         }
         pub fn log(&mut self, l: &Line) {
             if let Some(key) = &l.key {
-                let json_size = Value::String(key.to_string()).to_string().as_bytes().len() + 3;
+                let json_size = Value::String(key.to_string()).to_string().as_bytes().len() + 1;
                 self.key += MemoryStat {
                     count: 0,
                     json_size,
@@ -375,7 +375,7 @@ mod memory {
                     }
                 }
                 String(s) => {
-                    let json_size = Value::String(s.to_string()).to_string().as_bytes().len() + 2;
+                    let json_size = Value::String(s.to_string()).to_string().as_bytes().len();
                     self.string += MemoryStat {
                         count: 1,
                         json_size,
@@ -413,7 +413,7 @@ mod memory {
                 ValueTerminator => {
                     self.value_terminator += MemoryStat {
                         count: 1,
-                        json_size: 1,
+                        json_size: 1, // Newlines, including trailing newline
                         indirect_bytes: 0,
                     }
                 }
@@ -424,7 +424,6 @@ mod memory {
             for line in lines {
                 out.log(line)
             }
-            out.value_terminator.json_size -= 1;
             out
         }
     }
