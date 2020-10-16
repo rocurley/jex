@@ -4,7 +4,7 @@ use tui::{
     text::{Span, Spans},
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Line {
     pub content: LineContent,
     pub key: Option<Box<str>>,
@@ -50,7 +50,7 @@ pub fn next_displayable_line(i: usize, lines: &[Line]) -> Option<usize> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LineContent {
     Null,
     Bool(bool),
