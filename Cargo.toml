@@ -36,6 +36,7 @@ features = ["bundled"]
 proptest = "0.10.1"
 criterion = "0.3"
 pretty_assertions = "0.6.1"
+cpuprofiler = "0.0.4"
 
 [[bench]]
 name = "benchmark"

@@ -28,8 +28,8 @@ pub fn prior_displayable_line(mut i: usize, lines: &[Line]) -> Option<usize> {
     }
 }
 
-pub fn next_displayable_line(i: usize, lines: &[Line]) -> Option<usize> {
-    let delta = match lines[i] {
+pub fn next_displayable_line_raw(i: usize, line: &Line) -> usize {
+    let delta = match line {
         Line {
             content: LineContent::ArrayStart(lines_skipped),
             folded: true,
@@ -42,7 +42,11 @@ pub fn next_displayable_line(i: usize, lines: &[Line]) -> Option<usize> {
         } => lines_skipped + 2,
         _ => 1,
     };
-    let new_i = i + delta;
+    i + delta
+}
+
+pub fn next_displayable_line(i: usize, lines: &[Line]) -> Option<usize> {
+    let new_i = next_displayable_line_raw(i, &lines[i]);
     if new_i >= lines.len() {
         None
     } else {
@@ -152,7 +156,7 @@ pub fn render_lines<'a>(
 ) -> Vec<Spans<'a>> {
     renderable_lines(scroll, lines)
         .take(line_limit as usize)
-        .map(|i| render_line(i, cursor, lines))
+        .map(|i| render_line(i, cursor, &lines[i]))
         .collect()
 }
 
@@ -181,8 +185,7 @@ impl<'a> Iterator for RenderableLines<'a> {
     }
 }
 
-fn render_line<'a>(i: usize, cursor: Option<usize>, lines: &'a [Line]) -> Spans<'a> {
-    let line = &lines[i];
+pub fn render_line<'a>(i: usize, cursor: Option<usize>, line: &'a Line) -> Spans<'a> {
     let indent_span = Span::raw("  ".repeat(line.indent as usize));
     let mut out = match &line.key {
         Some(key) => vec![

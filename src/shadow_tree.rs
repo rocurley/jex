@@ -1,5 +1,9 @@
-use crate::lines::{Line, LineContent};
+use crate::lines::{next_displayable_line_raw, Line, LineContent};
 use serde_json::{value::Value, Map};
+use tui::{
+    style::{Color, Modifier, Style},
+    text::{Span, Spans},
+};
 
 // In the future, we could store the shadow tree in a vec. This would let us do a AOS -> SOA
 // transformation, which in turn would let us replace folded with a bitvector, going from 64 bits
@@ -74,11 +78,6 @@ fn shadow_tree_children<'a, I: ExactSizeIterator<Item = &'a Value>>(
     shadow_children.into()
 }
 
-enum Node<'a> {
-    Top(&'a [Value]),
-    Value(&'a Value),
-}
-
 pub fn index<'a, 'b>(i: usize, shadow_node: &'a Shadow, values: &'b [Value]) -> Option<Line> {
     let indent = 0;
     let current_index = 0;
@@ -97,6 +96,12 @@ pub fn index<'a, 'b>(i: usize, shadow_node: &'a Shadow, values: &'b [Value]) -> 
         false,
     ))
 }
+
+enum Node<'a> {
+    Top(&'a [Value]),
+    Value(&'a Value),
+}
+
 fn index_inner<'a, 'b>(
     ix: usize,
     shadow_node: &'a Shadow,
@@ -240,6 +245,176 @@ fn zip_map_shadow<'a: 'c, 'b: 'c, 'c>(
         Value::Array(_) | Value::Object(_) => (shadow_children.next(), Some(key.as_str()), child),
         _ => (None, Some(key.as_str()), child),
     })
+}
+
+pub fn render_line(i: usize, cursor: Option<usize>, line: Line) -> Spans<'static> {
+    let indent_span = Span::raw("  ".repeat(line.indent as usize));
+    let mut out = match &line.key {
+        Some(key) => vec![
+            indent_span,
+            Span::raw(format!("{:?}", key)),
+            Span::raw(" : "),
+        ],
+        _ => vec![indent_span],
+    };
+    let style = if Some(i) == cursor {
+        Style::default().bg(Color::Blue)
+    } else {
+        Style::default()
+    };
+    match line {
+        Line {
+            content: LineContent::Null,
+            ..
+        } => {
+            out.push(Span::styled("null", style));
+            if line.comma {
+                out.push(Span::raw(","));
+            }
+        }
+        Line {
+            content: LineContent::String(s),
+            ..
+        } => {
+            out.push(Span::styled(format!("{:?}", s), style));
+            if line.comma {
+                out.push(Span::raw(","));
+            }
+        }
+        Line {
+            content: LineContent::Bool(b),
+            ..
+        } => {
+            out.push(Span::styled(b.to_string(), style));
+            if line.comma {
+                out.push(Span::raw(","));
+            }
+        }
+        Line {
+            content: LineContent::Number(x),
+            ..
+        } => {
+            out.push(Span::styled(x.to_string(), style));
+            if line.comma {
+                out.push(Span::raw(","));
+            }
+        }
+        Line {
+            content: LineContent::ArrayStart(skipped_lines),
+            folded: true,
+            ..
+        } => {
+            out.push(Span::styled("[...]", style));
+            if line.comma {
+                out.push(Span::raw(","));
+            }
+            out.push(Span::styled(
+                format!(" ({} lines)", skipped_lines),
+                Style::default().add_modifier(Modifier::DIM),
+            ));
+        }
+        Line {
+            content: LineContent::ArrayEnd(_),
+            folded: true,
+            ..
+        } => {
+            panic!("Attempted to print close of folded array");
+        }
+        Line {
+            content: LineContent::ArrayStart(_),
+            folded: false,
+            ..
+        } => {
+            out.push(Span::styled("[", style));
+        }
+        Line {
+            content: LineContent::ArrayEnd(_),
+            folded: false,
+            ..
+        } => {
+            out.push(Span::styled("]", style));
+            if line.comma {
+                out.push(Span::raw(","));
+            }
+        }
+        Line {
+            content: LineContent::ObjectStart(skipped_lines),
+            folded: true,
+            ..
+        } => {
+            out.push(Span::styled("{...}", style));
+            if line.comma {
+                out.push(Span::raw(","));
+            }
+            out.push(Span::styled(
+                format!(" ({} lines)", skipped_lines),
+                Style::default().add_modifier(Modifier::DIM),
+            ));
+        }
+        Line {
+            content: LineContent::ObjectEnd(_),
+            folded: true,
+            ..
+        } => {
+            panic!("Attempted to print close of folded array");
+        }
+        Line {
+            content: LineContent::ObjectStart(_),
+            folded: false,
+            ..
+        } => {
+            out.push(Span::styled("{", style));
+        }
+        Line {
+            content: LineContent::ObjectEnd(_),
+            folded: false,
+            ..
+        } => {
+            out.push(Span::styled("}", style));
+            if line.comma {
+                out.push(Span::raw(","));
+            }
+        }
+    };
+    Spans::from(out)
+}
+pub fn render_lines<'a>(
+    scroll: usize,
+    line_limit: u16,
+    cursor: Option<usize>,
+    shadow_tree: &'a Shadow,
+    values: &'a [Value],
+) -> Vec<Spans<'a>> {
+    renderable_lines(scroll, shadow_tree, values)
+        .take(line_limit as usize)
+        .map(|(i, line)| render_line(i, cursor, line))
+        .collect()
+}
+pub fn renderable_lines<'a>(
+    scroll: usize,
+    shadow_tree: &'a Shadow,
+    values: &'a [Value],
+) -> impl Iterator<Item = (usize, Line)> + 'a {
+    RenderableLines {
+        i: scroll,
+        shadow_tree,
+        values,
+    }
+}
+
+struct RenderableLines<'a> {
+    i: usize,
+    shadow_tree: &'a Shadow,
+    values: &'a [Value],
+}
+impl<'a> Iterator for RenderableLines<'a> {
+    type Item = (usize, Line);
+    fn next(&mut self) -> Option<(usize, Line)> {
+        let i = self.i;
+        let out = index(self.i, self.shadow_tree, self.values)?;
+        self.i = next_displayable_line_raw(self.i, &out);
+        Some((i, out))
+    }
 }
 
 #[cfg(test)]
