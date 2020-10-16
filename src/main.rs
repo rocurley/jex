@@ -46,20 +46,28 @@ enum Mode {
     Normal(NormalMode),
     Bench(BenchMode),
     Memory(MemoryMode),
+    Sizes(SizesMode),
 }
 
 #[derive(FromArgs, PartialEq, Debug)]
-/// Run the editor
 #[argh(subcommand, name = "load")]
+/// Run the editor
 struct NormalMode {}
+
 #[derive(FromArgs, PartialEq, Debug)]
-/// Benchmark loading a json file
 #[argh(subcommand, name = "bench")]
+/// Benchmark loading a json file
 struct BenchMode {}
+
 #[derive(FromArgs, PartialEq, Debug)]
-/// Break down memory usage from loading a json file
 #[argh(subcommand, name = "memory")]
+/// Break down memory usage from loading a json file
 struct MemoryMode {}
+
+#[derive(FromArgs, PartialEq, Debug)]
+#[argh(subcommand, name = "sizes")]
+/// Print the sizes of various data structures
+struct SizesMode {}
 
 // TODO
 // * Large file perf (181 mb): 13.68 sec
@@ -88,6 +96,7 @@ fn main() -> Result<(), io::Error> {
         Mode::Normal(_) => run(args.json_path),
         Mode::Bench(_) => bench(args.json_path),
         Mode::Memory(_) => memory(args.json_path),
+        Mode::Sizes(_) => sizes(),
     }
 }
 
@@ -318,6 +327,23 @@ fn memory(json_path: String) -> Result<(), io::Error> {
         )
     );
     json_table.printstd();
+    Ok(())
+}
+
+#[cfg(feature = "dev-tools")]
+fn sizes() -> Result<(), io::Error> {
+    use serde_json::map::Map;
+    use serde_json::Number;
+    use std::mem::size_of;
+    dbg!(size_of::<Line>());
+    dbg!(size_of::<LineContent>());
+    dbg!(size_of::<Option<String>>());
+    dbg!(size_of::<Option<Box<str>>>());
+    dbg!(size_of::<usize>());
+    dbg!(size_of::<Number>());
+    dbg!(size_of::<Value>());
+    dbg!(size_of::<Map<String, Value>>());
+    dbg!(size_of::<jed::shadow_tree::Shadow>());
     Ok(())
 }
 
