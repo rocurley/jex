@@ -1,6 +1,6 @@
 use argh::FromArgs;
 use serde_json::{value::Value, Deserializer};
-use std::{fs, io, ops::RangeInclusive};
+use std::{fs, io, io::Write, ops::RangeInclusive};
 use termion::{
     event::Key,
     input::{MouseTerminal, TermRead},
@@ -117,7 +117,8 @@ fn run(json_path: String) -> Result<(), io::Error> {
     let stdout = AlternateScreen::from(stdout);
     let backend = TermionBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-    app.render(&mut terminal)?;
+    app.render(&mut terminal, AppRenderMode::Normal)?;
+    let mut rl: rustyline::Editor<()> = rustyline::Editor::new();
     let mut keys = stdin.keys();
     while let Some(c) = keys.next() {
         let c = c?;
@@ -125,28 +126,16 @@ fn run(json_path: String) -> Result<(), io::Error> {
         match c {
             Key::Esc => break,
             Key::Char('q') => {
-                app.new_query = Some(app.query.clone());
-                app.render(&mut terminal)?;
-                #[allow(clippy::while_let_on_iterator)]
-                while let Some(key) = keys.next() {
-                    let new_query = app.new_query.as_mut().unwrap();
-                    match key? {
-                        Key::Esc => break,
-                        Key::Char('\n') => {
-                            app.query = app.new_query.take().unwrap();
-                            app.recompute_right();
-                            break;
-                        }
-                        Key::Backspace => {
-                            new_query.pop();
-                            app.render(&mut terminal)?;
-                        }
-                        Key::Char(c) => {
-                            new_query.push(c);
-                            app.render(&mut terminal)?;
-                        }
-                        _ => {}
+                app.render(&mut terminal, AppRenderMode::QueryEditor)?;
+                match rl.readline_with_initial("", (&app.query, "")) {
+                    Ok(new_query) => {
+                        app.query = new_query;
+                        // Prevent the cursor from rendering while we wait for JQ
+                        terminal.clear()?;
+                        app.render(&mut terminal, AppRenderMode::Normal)?;
+                        app.recompute_right();
                     }
+                    Err(_) => {}
                 }
             }
             Key::Char('\t') => app.focus = app.focus.swap(),
@@ -210,7 +199,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
                 _ => {}
             },
         }
-        app.render(&mut terminal)?;
+        app.render(&mut terminal, AppRenderMode::Normal)?;
     }
     Ok(())
 }
@@ -371,7 +360,6 @@ struct App {
     left: View,
     right: Option<View>,
     focus: Focus,
-    new_query: Option<String>,
     query: String,
 }
 
@@ -481,6 +469,11 @@ impl JedLayout {
     }
 }
 
+enum AppRenderMode {
+    Normal,
+    QueryEditor,
+}
+
 impl App {
     fn new<R: io::Read>(r: R) -> io::Result<Self> {
         let content: Vec<Value> = Deserializer::from_reader(r)
@@ -491,7 +484,6 @@ impl App {
             left,
             right: None,
             focus: Focus::Left,
-            new_query: None,
             query: String::new(),
         };
         app.recompute_right();
@@ -505,12 +497,15 @@ impl App {
             View::Error(_) => {}
         }
     }
-    fn render(&mut self, terminal: &mut Terminal<TermionBackend<Screen>>) -> io::Result<()> {
+    fn render(
+        &mut self,
+        terminal: &mut Terminal<TermionBackend<Screen>>,
+        mode: AppRenderMode,
+    ) -> io::Result<()> {
         let App {
             left,
             right,
             query,
-            new_query,
             focus,
             ..
         } = self;
@@ -531,13 +526,17 @@ impl App {
                 }
                 None => f.render_widget(right_block, layout.right),
             }
-            let query = Paragraph::new(new_query.as_ref().unwrap_or(query).as_str())
-                .alignment(Alignment::Left)
-                .wrap(Wrap { trim: false });
-            if let Some(query) = new_query.as_ref() {
-                f.set_cursor(query.len() as u16, layout.query.y);
+            match mode {
+                AppRenderMode::Normal => {
+                    let query = Paragraph::new(query.as_str())
+                        .alignment(Alignment::Left)
+                        .wrap(Wrap { trim: false });
+                    f.render_widget(query, layout.query);
+                }
+                AppRenderMode::QueryEditor => {
+                    f.set_cursor(0, layout.query.y);
+                }
             }
-            f.render_widget(query, layout.query);
         })
     }
 }
