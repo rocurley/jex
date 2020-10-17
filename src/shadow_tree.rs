@@ -21,9 +21,9 @@ use tui::{
 // hold open the option of only using the jv representation, we can't move folded inline.
 #[derive(Debug, Clone)]
 pub struct Shadow {
-    folded: bool,
-    sibling_start_index: usize,
-    children: Box<[Shadow]>,
+    pub folded: bool,
+    pub sibling_start_index: usize,
+    pub children: Box<[Shadow]>,
 }
 
 pub fn construct_shadow_tree(values: &[Value]) -> Shadow {
@@ -205,6 +205,34 @@ fn index_inner<'a, 'b>(
         }
     }
     panic!("Couldn't find a child for this index: is the shadow tree malformed?");
+}
+
+pub fn next_displayable_line(i: usize, shadow: &Shadow, values: &[Value]) -> Option<usize> {
+    let line = index(i, shadow, values)?;
+    let new_i = next_displayable_line_raw(i, &line);
+    if new_i >= shadow.sibling_start_index {
+        None
+    } else {
+        Some(new_i)
+    }
+}
+
+pub fn prior_displayable_line(i: usize, shadow: &Shadow, values: &[Value]) -> Option<usize> {
+    let i = i.checked_sub(1)?;
+    let line = index(i, shadow, values)?;
+    match &line.content {
+        LineContent::ArrayEnd(lines_skipped) | LineContent::ObjectEnd(lines_skipped) => {
+            let matching_i = i - 1 - lines_skipped;
+            let matching_line = index(matching_i, shadow, values).unwrap();
+            // TODO: apply folded to both ends of array/object so we don't need to do this.
+            if matching_line.folded {
+                Some(matching_i)
+            } else {
+                Some(i)
+            }
+        }
+        _ => Some(i),
+    }
 }
 
 fn leaf_to_line(indent: u8, key: Option<&str>, node: &Value, comma: bool) -> Line {
@@ -414,6 +442,101 @@ impl<'a> Iterator for RenderableLines<'a> {
         let out = index(self.i, self.shadow_tree, self.values)?;
         self.i = next_displayable_line_raw(self.i, &out);
         Some((i, out))
+    }
+}
+
+pub mod mutable {
+    use super::{zip_array_shadow, zip_map_shadow, Shadow};
+    use serde_json::Value;
+    pub fn index_shadow<'a, 'b>(
+        i: usize,
+        shadow_node: &'a mut Shadow,
+        values: &'b [Value],
+    ) -> Option<(usize, &'a mut Shadow)> {
+        let current_index = 0;
+        let node = Node::Top(values);
+        if i >= shadow_node.sibling_start_index {
+            return None;
+        }
+        Some(index_inner(i, shadow_node, node, current_index))
+    }
+
+    #[derive(Debug)]
+    enum Node<'a> {
+        Top(&'a [Value]),
+        Value(&'a Value),
+    }
+
+    fn index_inner<'a, 'b>(
+        ix: usize,
+        shadow_node: &'a mut Shadow,
+        node: Node<'b>,
+        mut current_index: usize,
+    ) -> (usize, &'a mut Shadow) {
+        assert!(ix < shadow_node.sibling_start_index);
+        assert!(current_index <= ix);
+        let current_node_cannonical_index = current_index;
+        let mut zipped_children: Box<dyn ExactSizeIterator<Item = _>> = match node {
+            Node::Top(arr) => Box::new(zip_array_shadow(shadow_node, arr)),
+            Node::Value(Value::Array(arr)) => {
+                if ix == current_index {
+                    return (current_node_cannonical_index, shadow_node);
+                }
+                if ix == shadow_node.sibling_start_index - 1 {
+                    return (current_node_cannonical_index, shadow_node);
+                }
+                current_index += 1; // Skip ArrayStart
+                Box::new(zip_array_shadow(shadow_node, arr))
+            }
+            Node::Value(Value::Object(obj)) => {
+                if ix == current_index {
+                    return (current_node_cannonical_index, shadow_node);
+                }
+                if ix == shadow_node.sibling_start_index - 1 {
+                    return (current_node_cannonical_index, shadow_node);
+                }
+                current_index += 1; // Skip ObjectStart
+                Box::new(zip_map_shadow(shadow_node, obj))
+            }
+            Node::Value(_) => panic!("index_inner should only be called on a non-leaf node"),
+        };
+        // This is pretty clunky. If we do the obvious thing of making a zipped_children iterate
+        // over `&mut Shadow`s, the borrow checker will unify the lifetime of the child with 'a,
+        // and so won't let us return the parent (since the parent is mutably borrowed through the
+        // lifetime of this function. Instead, we find the index of the child we want using an
+        // immutable borrow, then re-borrow it mutable after the loop.
+        let mut current_child_index = 0;
+        let (selected_child_index, selected_child) = loop {
+            let (shadow_child, _, child) = zipped_children
+                .next()
+                .expect("Couldn't find a child for this index: is the shadow tree malformed?");
+            match shadow_child {
+                Some(shadow_child) => {
+                    if ix < shadow_child.sibling_start_index {
+                        break (Some(current_child_index), child);
+                    } else {
+                        current_index = shadow_child.sibling_start_index;
+                        current_child_index += 1;
+                    }
+                }
+                None => {
+                    if ix == current_index {
+                        break (None, child);
+                    }
+                    current_index += 1;
+                }
+            }
+        };
+        drop(zipped_children);
+        match selected_child_index {
+            None => (current_node_cannonical_index, shadow_node),
+            Some(i) => index_inner(
+                ix,
+                &mut shadow_node.children[i],
+                Node::Value(selected_child),
+                current_index,
+            ),
+        }
     }
 }
 

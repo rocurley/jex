@@ -22,9 +22,11 @@ use cpuprofiler::PROFILER;
 use jed::lines::memory::{MemoryStat, MemoryStats};
 use jed::{
     jq::{run_jq_query, JQ},
-    lines::{
-        json_to_lines, next_displayable_line, prior_displayable_line, render_lines,
-        renderable_lines, Line, LineContent,
+    lines::{json_to_lines, Line, LineContent},
+    shadow_tree,
+    shadow_tree::{
+        construct_shadow_tree, next_displayable_line, prior_displayable_line, render_lines,
+        renderable_lines, Shadow,
     },
 };
 #[cfg(feature = "dev-tools")]
@@ -163,44 +165,47 @@ fn run(json_path: String) -> Result<(), io::Error> {
             Some(View::Json(view)) => match c {
                 Key::Down => {
                     if let Some(i) = view.cursor.as_mut() {
-                        if let Some(new_i) = next_displayable_line(*i, &view.lines) {
+                        if let Some(new_i) =
+                            next_displayable_line(*i, &view.shadow_tree, &view.values)
+                        {
                             *i = new_i;
                         }
                         let i = *i; //Return mutable borrow
                         if !view.visible_range(line_limit).contains(&i) {
-                            view.scroll = next_displayable_line(view.scroll, &view.lines)
-                                .expect("Shouldn't be able to scroll off the bottom");
+                            view.scroll =
+                                next_displayable_line(view.scroll, &view.shadow_tree, &view.values)
+                                    .expect("Shouldn't be able to scroll off the bottom");
                         }
                     }
                 }
                 Key::Up => {
                     if let Some(i) = view.cursor.as_mut() {
-                        if let Some(new_i) = prior_displayable_line(*i, &view.lines) {
+                        if let Some(new_i) =
+                            prior_displayable_line(*i, &view.shadow_tree, &view.values)
+                        {
                             *i = new_i;
                         }
                         let i = *i; //Return mutable borrow
                         if !view.visible_range(line_limit).contains(&i) {
-                            view.scroll = prior_displayable_line(view.scroll, &view.lines)
-                                .expect("Shouldn't be able to scroll off the bottom");
+                            view.scroll = prior_displayable_line(
+                                view.scroll,
+                                &view.shadow_tree,
+                                &view.values,
+                            )
+                            .expect("Shouldn't be able to scroll off the bottom");
                         }
                     }
                 }
                 Key::Char('z') => {
                     if let Some(i) = view.cursor.as_mut() {
-                        let line = &mut view.lines[*i];
-                        match line.content {
-                            LineContent::ArrayStart(_) | LineContent::ObjectStart(_) => {
-                                line.folded = !line.folded;
-                            }
-                            LineContent::ArrayEnd(skipped_lines)
-                            | LineContent::ObjectEnd(skipped_lines) => {
-                                *i -= skipped_lines + 1;
-                                let line = &mut view.lines[*i];
-                                assert_eq!(line.folded, false);
-                                line.folded = true;
-                            }
-                            _ => {}
-                        }
+                        let (new_i, shadow) = shadow_tree::mutable::index_shadow(
+                            *i,
+                            &mut view.shadow_tree,
+                            &view.values,
+                        )
+                        .expect("Cursor should not be able to reach an invalid index");
+                        *i = new_i;
+                        shadow.folded = !shadow.folded;
                     }
                 }
                 _ => {}
@@ -332,8 +337,7 @@ fn memory(json_path: String) -> Result<(), io::Error> {
 
 #[cfg(feature = "dev-tools")]
 fn sizes() -> Result<(), io::Error> {
-    use serde_json::map::Map;
-    use serde_json::Number;
+    use serde_json::{map::Map, Number};
     use std::mem::size_of;
     dbg!(size_of::<Line>());
     dbg!(size_of::<LineContent>());
@@ -403,30 +407,31 @@ impl View {
 struct JsonView {
     scroll: usize,
     values: Vec<Value>,
-    lines: Vec<Line>,
+    shadow_tree: Shadow,
     cursor: Option<usize>,
 }
 
 impl JsonView {
     fn new(values: Vec<Value>) -> Self {
-        let lines = json_to_lines(values.iter());
-        let cursor = if lines.is_empty() { None } else { Some(0) };
+        let shadow_tree = construct_shadow_tree(&values);
+        let cursor = if values.is_empty() { None } else { Some(0) };
         JsonView {
             scroll: 0,
             values,
-            lines,
+            shadow_tree,
             cursor,
         }
     }
     fn render(&self, line_limit: u16, has_focus: bool) -> Paragraph {
         let JsonView {
-            lines,
+            shadow_tree,
             cursor,
             scroll,
+            values,
             ..
         } = self;
         let cursor = if has_focus { cursor.clone() } else { None };
-        let text = render_lines(*scroll, line_limit, cursor, lines);
+        let text = render_lines(*scroll, line_limit, cursor, shadow_tree, values);
         Paragraph::new(text)
             .style(Style::default().fg(Color::White).bg(Color::Black))
             .alignment(Alignment::Left)
@@ -442,9 +447,12 @@ impl JsonView {
         }
     }
     fn visible_range(&self, line_limit: usize) -> RangeInclusive<usize> {
-        let mut lines = renderable_lines(self.scroll, &self.lines);
-        let first = lines.next().expect("Should have at least one line");
-        let last = lines.take(line_limit - 1).last().unwrap_or(first);
+        let mut lines = renderable_lines(self.scroll, &self.shadow_tree, &self.values);
+        let first = lines.next().expect("Should have at least one line").0;
+        let last = lines
+            .take(line_limit - 1)
+            .last()
+            .map_or(first, |(last, _)| last);
         first..=last
     }
 }
