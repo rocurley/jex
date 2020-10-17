@@ -44,7 +44,7 @@ fn construct_shadow_tree_inner(mut i: usize, value: &Value) -> Option<Shadow> {
             Some(Shadow {
                 folded: false,
                 sibling_start_index: i + 1, //ArrayEnd
-                children: children.into(),
+                children,
             })
         }
         Value::Object(obj) => {
@@ -53,7 +53,7 @@ fn construct_shadow_tree_inner(mut i: usize, value: &Value) -> Option<Shadow> {
             Some(Shadow {
                 folded: false,
                 sibling_start_index: i + 1, //ObjectEnd
-                children: children.into(),
+                children,
             })
         }
         _ => None,
@@ -78,7 +78,7 @@ fn shadow_tree_children<'a, I: ExactSizeIterator<Item = &'a Value>>(
     shadow_children.into()
 }
 
-pub fn index<'a, 'b>(i: usize, shadow_node: &'a Shadow, values: &'b [Value]) -> Option<Line> {
+pub fn index(i: usize, shadow_node: &Shadow, values: &[Value]) -> Option<Line> {
     let indent = 0;
     let current_index = 0;
     let key: Option<&str> = None;
@@ -102,10 +102,10 @@ enum Node<'a> {
     Value(&'a Value),
 }
 
-fn index_inner<'a, 'b>(
+fn index_inner(
     ix: usize,
-    shadow_node: &'a Shadow,
-    node: Node<'b>,
+    shadow_node: &Shadow,
+    node: Node,
     mut current_index: usize,
     key: Option<&str>,
     indent: u8,
@@ -542,10 +542,10 @@ pub mod mutable {
 
 #[cfg(test)]
 mod tests {
-    use super::{construct_shadow_tree, index};
+    use super::{construct_shadow_tree, renderable_lines};
     use crate::{
-        lines::{json_to_lines, Line},
-        testing::arb_json,
+        lines::Line,
+        testing::{arb_json, json_to_lines},
     };
     use pretty_assertions::assert_eq;
     use proptest::proptest;
@@ -553,7 +553,7 @@ mod tests {
         #[test]
         fn prop_lines(values in proptest::collection::vec(arb_json(), 1..10)) {
             let shadow_tree = construct_shadow_tree(&values);
-            let actual_lines : Vec<Line>= (0..).into_iter().scan((),|(),i| index(i, &shadow_tree, &values)).collect();
+            let actual_lines : Vec<Line> = renderable_lines(0, &shadow_tree, &values).map(|(_, line)| line).collect();
             let expected_lines = json_to_lines(values.iter());
             assert_eq!(actual_lines, expected_lines);
         }

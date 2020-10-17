@@ -22,7 +22,6 @@ use cpuprofiler::PROFILER;
 use jed::lines::memory::{MemoryStat, MemoryStats};
 use jed::{
     jq::{run_jq_query, JQ},
-    lines::{json_to_lines, Line, LineContent},
     shadow_tree,
     shadow_tree::{
         construct_shadow_tree, next_displayable_line, prior_displayable_line, render_lines,
@@ -391,9 +390,9 @@ impl View {
             View::Json(json_view) => json_view.render(line_limit, has_focus),
             View::Error(err) => {
                 let err_text = err
-                    .into_iter()
+                    .iter()
                     .flat_map(|e| e.split('\n'))
-                    .map(|e| Spans::from(e))
+                    .map(Spans::from)
                     .collect::<Vec<_>>();
                 Paragraph::new(err_text)
                     .style(Style::default().fg(Color::White).bg(Color::Red))
@@ -430,7 +429,7 @@ impl JsonView {
             values,
             ..
         } = self;
-        let cursor = if has_focus { cursor.clone() } else { None };
+        let cursor = if has_focus { *cursor } else { None };
         let text = render_lines(*scroll, line_limit, cursor, shadow_tree, values);
         Paragraph::new(text)
             .style(Style::default().fg(Color::White).bg(Color::Black))
