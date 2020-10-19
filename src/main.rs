@@ -15,6 +15,7 @@ use tui::{
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame, Terminal,
 };
+use unicode_width::UnicodeWidthStr;
 
 #[cfg(feature = "dev-tools")]
 use cpuprofiler::PROFILER;
@@ -107,6 +108,35 @@ fn main() -> Result<(), io::Error> {
     run(args.json_path)
 }
 
+fn force_draw<B: tui::backend::Backend, F: FnMut(&mut Frame<B>)>(
+    terminal: &mut Terminal<B>,
+    mut f: F,
+) -> Result<(), io::Error> {
+    terminal.autoresize()?;
+    let mut frame = terminal.get_frame();
+    f(&mut frame);
+    let current_buffer = terminal.current_buffer_mut().clone();
+    terminal.current_buffer_mut().reset();
+    terminal.draw(f)?;
+    let area = current_buffer.area;
+    let width = area.width;
+
+    let mut updates: Vec<(u16, u16, &tui::buffer::Cell)> = vec![];
+    // Cells from the current buffer to skip due to preceeding multi-width characters taking their
+    // place (the skipped cells should be blank anyway):
+    let mut to_skip: usize = 0;
+    for (i, current) in current_buffer.content.iter().enumerate() {
+        if to_skip == 0 {
+            let x = i as u16 % width;
+            let y = i as u16 / width;
+            updates.push((x, y, &current_buffer.content[i]));
+        }
+
+        to_skip = current.symbol.width().saturating_sub(1);
+    }
+    terminal.backend_mut().draw(updates.into_iter())
+}
+
 fn run(json_path: String) -> Result<(), io::Error> {
     let stdin = io::stdin();
     let f = fs::File::open(json_path)?;
@@ -117,8 +147,9 @@ fn run(json_path: String) -> Result<(), io::Error> {
     let stdout = AlternateScreen::from(stdout);
     let backend = TermionBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-    app.render(&mut terminal, AppRenderMode::Normal)?;
+    terminal.draw(app.render(AppRenderMode::Normal))?;
     let mut rl: rustyline::Editor<()> = rustyline::Editor::new();
+    // rl.bind_sequence(rustyline::KeyPress::Tab, rustyline::Cmd::Interrupt);
     let mut keys = stdin.keys();
     while let Some(c) = keys.next() {
         let c = c?;
@@ -126,13 +157,10 @@ fn run(json_path: String) -> Result<(), io::Error> {
         match c {
             Key::Esc => break,
             Key::Char('q') => {
-                app.render(&mut terminal, AppRenderMode::QueryEditor)?;
+                terminal.draw(app.render(AppRenderMode::QueryEditor))?;
                 match rl.readline_with_initial("", (&app.query, "")) {
                     Ok(new_query) => {
                         app.query = new_query;
-                        // Prevent the cursor from rendering while we wait for JQ
-                        terminal.clear()?;
-                        app.render(&mut terminal, AppRenderMode::Normal)?;
                         app.recompute_right();
                     }
                     Err(_) => {}
@@ -199,7 +227,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
                 _ => {}
             },
         }
-        app.render(&mut terminal, AppRenderMode::Normal)?;
+        terminal.draw(app.render(AppRenderMode::Normal))?;
     }
     Ok(())
 }
@@ -451,7 +479,7 @@ struct JedLayout {
 }
 
 impl JedLayout {
-    fn new(f: &Frame<TermionBackend<Screen>>) -> JedLayout {
+    fn new<B: tui::backend::Backend>(f: &Frame<B>) -> JedLayout {
         let size = f.size();
         let vchunks = Layout::default()
             .direction(Direction::Vertical)
@@ -497,11 +525,10 @@ impl App {
             View::Error(_) => {}
         }
     }
-    fn render(
-        &mut self,
-        terminal: &mut Terminal<TermionBackend<Screen>>,
+    fn render<'a, B: tui::backend::Backend>(
+        &'a mut self,
         mode: AppRenderMode,
-    ) -> io::Result<()> {
+    ) -> impl FnMut(&mut Frame<B>) + 'a {
         let App {
             left,
             right,
@@ -509,7 +536,7 @@ impl App {
             focus,
             ..
         } = self;
-        terminal.draw(|f| {
+        move |f| {
             let layout = JedLayout::new(f);
             let left_block = Block::default().title("Left").borders(Borders::ALL);
             let left_paragraph = left
@@ -537,6 +564,6 @@ impl App {
                     f.set_cursor(0, layout.query.y);
                 }
             }
-        })
+        }
     }
 }
