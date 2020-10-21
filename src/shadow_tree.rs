@@ -1,5 +1,6 @@
 use crate::lines::{next_displayable_line_raw, Line, LineContent};
 use serde_json::{value::Value, Map};
+use std::cell::Cell;
 use tui::{
     style::{Color, Modifier, Style},
     text::{Span, Spans},
@@ -21,7 +22,10 @@ use tui::{
 // hold open the option of only using the jv representation, we can't move folded inline.
 #[derive(Debug, Clone)]
 pub struct Shadow {
-    pub folded: bool,
+    // This is a bit sketchy. But the burden of maintaining two (somewhat different) accessors for
+    // mutable and immmutable access is pretty rough. Working through a cell is no particular
+    // burden for a copy value like a bool.
+    pub folded: Cell<bool>,
     pub sibling_start_index: usize,
     pub children: Box<[Shadow]>,
 }
@@ -30,7 +34,7 @@ pub fn construct_shadow_tree(values: &[Value]) -> Shadow {
     let mut i = 0;
     let children = shadow_tree_children(&mut i, values.iter());
     Shadow {
-        folded: false,
+        folded: Cell::new(false),
         sibling_start_index: i,
         children,
     }
@@ -42,7 +46,7 @@ fn construct_shadow_tree_inner(mut i: usize, value: &Value) -> Option<Shadow> {
             i += 1; // ArrayStart
             let children = shadow_tree_children(&mut i, arr.iter());
             Some(Shadow {
-                folded: false,
+                folded: Cell::new(false),
                 sibling_start_index: i + 1, //ArrayEnd
                 children,
             })
@@ -51,7 +55,7 @@ fn construct_shadow_tree_inner(mut i: usize, value: &Value) -> Option<Shadow> {
             i += 1; // ObjectStart
             let children = shadow_tree_children(&mut i, obj.values());
             Some(Shadow {
-                folded: false,
+                folded: Cell::new(false),
                 sibling_start_index: i + 1, //ObjectEnd
                 children,
             })
@@ -79,132 +83,12 @@ fn shadow_tree_children<'a, I: ExactSizeIterator<Item = &'a Value>>(
 }
 
 pub fn index(i: usize, shadow_node: &Shadow, values: &[Value]) -> Option<Line> {
-    let indent = 0;
-    let current_index = 0;
-    let key: Option<&str> = None;
-    let node = Node::Top(values);
-    if i >= shadow_node.sibling_start_index {
-        return None;
-    }
-    Some(index_inner(
-        i,
-        shadow_node,
-        node,
-        current_index,
-        key,
-        indent,
-        false,
-    ))
+    ShadowTreeCursor::new(shadow_node, values).seek(i)
 }
 
 enum Node<'a> {
     Top(&'a [Value]),
     Value(&'a Value),
-}
-
-fn index_inner(
-    ix: usize,
-    shadow_node: &Shadow,
-    node: Node,
-    mut current_index: usize,
-    key: Option<&str>,
-    indent: u8,
-    final_comma: bool,
-) -> Line {
-    assert!(ix < shadow_node.sibling_start_index);
-    assert!(current_index <= ix);
-    let zipped_children: Box<dyn ExactSizeIterator<Item = _>> = match node {
-        Node::Top(arr) => Box::new(zip_array_shadow(shadow_node, arr)),
-        Node::Value(Value::Array(arr)) => {
-            if ix == current_index {
-                return Line {
-                    key: key.map(|key| key.into()),
-                    folded: shadow_node.folded,
-                    indent,
-                    content: LineContent::ArrayStart(
-                        shadow_node.sibling_start_index - current_index - 2,
-                    ),
-                    comma: false,
-                };
-            }
-            if ix == shadow_node.sibling_start_index - 1 {
-                return Line {
-                    key: None,
-                    folded: shadow_node.folded,
-                    indent,
-                    content: LineContent::ArrayEnd(
-                        shadow_node.sibling_start_index - current_index - 2,
-                    ),
-                    comma: final_comma,
-                };
-            }
-            current_index += 1; // Skip ArrayStart
-            Box::new(zip_array_shadow(shadow_node, arr))
-        }
-        Node::Value(Value::Object(obj)) => {
-            if ix == current_index {
-                return Line {
-                    key: key.map(|key| key.into()),
-                    folded: shadow_node.folded,
-                    indent,
-                    content: LineContent::ObjectStart(
-                        shadow_node.sibling_start_index - current_index - 2,
-                    ),
-                    comma: false,
-                };
-            }
-            if ix == shadow_node.sibling_start_index - 1 {
-                return Line {
-                    key: None,
-                    folded: shadow_node.folded,
-                    indent,
-                    content: LineContent::ObjectEnd(
-                        shadow_node.sibling_start_index - current_index - 2,
-                    ),
-                    comma: final_comma,
-                };
-            }
-            current_index += 1; // Skip ObjectStart
-            Box::new(zip_map_shadow(shadow_node, obj))
-        }
-        Node::Value(_) => panic!("index_inner should only be called on a non-leaf node"),
-    };
-    let new_indent = match node {
-        Node::Top(_) => indent,
-        Node::Value(_) => indent + 1,
-    };
-    let len = zipped_children.len();
-    for (i, (shadow_child, key, child)) in zipped_children.enumerate() {
-        let child_has_comma = if let Node::Top(_) = node {
-            false
-        } else {
-            i != len - 1
-        };
-        match shadow_child {
-            Some(shadow_child) => {
-                if ix < shadow_child.sibling_start_index {
-                    return index_inner(
-                        ix,
-                        shadow_child,
-                        Node::Value(child),
-                        current_index,
-                        key,
-                        new_indent,
-                        child_has_comma,
-                    );
-                } else {
-                    current_index = shadow_child.sibling_start_index;
-                }
-            }
-            None => {
-                if ix == current_index {
-                    return leaf_to_line(new_indent, key, child, child_has_comma);
-                }
-                current_index += 1;
-            }
-        }
-    }
-    panic!("Couldn't find a child for this index: is the shadow tree malformed?");
 }
 
 pub fn next_displayable_line(i: usize, shadow: &Shadow, values: &[Value]) -> Option<usize> {
@@ -424,24 +308,22 @@ pub fn renderable_lines<'a>(
     values: &'a [Value],
 ) -> impl Iterator<Item = (usize, Line)> + 'a {
     RenderableLines {
-        i: scroll,
-        shadow_tree,
-        values,
+        next: scroll,
+        cursor: ShadowTreeCursor::new(shadow_tree, values),
     }
 }
 
 struct RenderableLines<'a> {
-    i: usize,
-    shadow_tree: &'a Shadow,
-    values: &'a [Value],
+    next: usize,
+    cursor: ShadowTreeCursor<'a>,
 }
 impl<'a> Iterator for RenderableLines<'a> {
     type Item = (usize, Line);
     fn next(&mut self) -> Option<(usize, Line)> {
-        let i = self.i;
-        let out = index(self.i, self.shadow_tree, self.values)?;
-        self.i = next_displayable_line_raw(self.i, &out);
-        Some((i, out))
+        let line = self.cursor.seek(self.next)?;
+        let i = self.next;
+        self.next = next_displayable_line_raw(i, &line);
+        Some((i, line))
     }
 }
 
@@ -540,9 +422,180 @@ pub mod mutable {
     }
 }
 
+pub struct ShadowTreeCursor<'a> {
+    pub index: usize,
+    frames: Vec<CursorFrame<'a>>,
+}
+
+struct CursorFrame<'a> {
+    key: Option<&'a str>,
+    /// The start of the range of indices indexed by this shadow node
+    start_index: usize,
+    shadow: &'a Shadow,
+    json: Node<'a>,
+    /// Index of this json value in its parent (either array index, or index into the iteration
+    /// over the object). Only null for the top frame.
+    local_index: Option<usize>,
+    final_comma: bool,
+}
+impl<'a> CursorFrame<'a> {
+    fn range(&self) -> std::ops::Range<usize> {
+        self.start_index..self.shadow.sibling_start_index
+    }
+}
+
+impl<'a> ShadowTreeCursor<'a> {
+    pub fn new(root: &'a Shadow, values: &'a [Value]) -> Self {
+        ShadowTreeCursor {
+            index: 0,
+            frames: vec![CursorFrame {
+                key: None,
+                start_index: 0,
+                shadow: root,
+                json: Node::Top(values),
+                local_index: None,
+                final_comma: false,
+            }],
+        }
+    }
+    pub fn seek(&mut self, target: usize) -> Option<Line> {
+        if target >= self.frames[0].shadow.sibling_start_index {
+            return None;
+        }
+        self.index = target;
+        while !self.frames.last().unwrap().range().contains(&target) {
+            self.frames.pop();
+        }
+        'descent: loop {
+            let frame = self.frames.last().unwrap();
+            // TODO: Seek from the current local index, up or down, depending. This will prevent
+            // quadratic scan times.
+            let (mut current_index, zipped_children): (
+                usize,
+                Box<dyn ExactSizeIterator<Item = _>>,
+            ) = match frame.json {
+                Node::Top(arr) => (
+                    frame.start_index,
+                    Box::new(zip_array_shadow(frame.shadow, arr)),
+                ),
+                Node::Value(Value::Array(arr)) => {
+                    if target == frame.start_index {
+                        return Some(Line {
+                            key: frame.key.map(|key| key.into()),
+                            folded: frame.shadow.folded.get(),
+                            indent: (self.frames.len() - 2) as u8,
+                            content: LineContent::ArrayStart(
+                                frame.shadow.sibling_start_index - frame.start_index - 2,
+                            ),
+                            comma: false,
+                        });
+                    }
+                    if target == frame.shadow.sibling_start_index - 1 {
+                        return Some(Line {
+                            key: None,
+                            folded: frame.shadow.folded.get(),
+                            indent: (self.frames.len() - 2) as u8,
+                            content: LineContent::ArrayEnd(
+                                frame.shadow.sibling_start_index - frame.start_index - 2,
+                            ),
+                            comma: frame.final_comma,
+                        });
+                    }
+                    (
+                        frame.start_index + 1, // Skip ArrayStart
+                        Box::new(zip_array_shadow(frame.shadow, arr)),
+                    )
+                }
+                Node::Value(Value::Object(obj)) => {
+                    if target == frame.start_index {
+                        return Some(Line {
+                            key: frame.key.map(|key| key.into()),
+                            folded: frame.shadow.folded.get(),
+                            indent: (self.frames.len() - 2) as u8,
+                            content: LineContent::ObjectStart(
+                                frame.shadow.sibling_start_index - frame.start_index - 2,
+                            ),
+                            comma: false,
+                        });
+                    }
+                    if target == frame.shadow.sibling_start_index - 1 {
+                        return Some(Line {
+                            key: None,
+                            folded: frame.shadow.folded.get(),
+                            indent: (self.frames.len() - 2) as u8,
+                            content: LineContent::ObjectEnd(
+                                frame.shadow.sibling_start_index - frame.start_index - 2,
+                            ),
+                            comma: frame.final_comma,
+                        });
+                    }
+                    (
+                        frame.start_index + 1, // Skip ArrayStart
+                        Box::new(zip_map_shadow(frame.shadow, obj)),
+                    )
+                }
+                Node::Value(_) => panic!("index_inner should only be called on a non-leaf node"),
+            };
+            let len = zipped_children.len();
+            for (i, (shadow_child, key, child)) in zipped_children.enumerate() {
+                let child_has_comma = if let Node::Top(_) = frame.json {
+                    false
+                } else {
+                    i != len - 1
+                };
+                match shadow_child {
+                    Some(shadow_child) => {
+                        if target < shadow_child.sibling_start_index {
+                            self.frames.push(CursorFrame {
+                                key,
+                                start_index: current_index,
+                                shadow: shadow_child,
+                                json: Node::Value(child),
+                                local_index: Some(i),
+                                final_comma: child_has_comma,
+                            });
+                            continue 'descent;
+                        } else {
+                            current_index = shadow_child.sibling_start_index;
+                        }
+                    }
+                    None => {
+                        if target == current_index {
+                            return Some(leaf_to_line(
+                                (self.frames.len() - 1) as u8,
+                                key,
+                                child,
+                                child_has_comma,
+                            ));
+                        }
+                        current_index += 1;
+                    }
+                }
+            }
+            panic!("Couldn't find a child for this index: is the shadow tree malformed?");
+        }
+    }
+    pub fn toggle_fold(&mut self) {
+        // Can't fold the top level
+        if self.frames.len() < 2 {
+            return;
+        }
+        let top_frame = self.frames.last().unwrap();
+        top_frame.shadow.folded.set(!top_frame.shadow.folded.get());
+        let new_i = top_frame.start_index;
+        self.seek(new_i);
+    }
+}
+impl<'a> Iterator for ShadowTreeCursor<'a> {
+    type Item = Line;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.seek(self.index + 1)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{construct_shadow_tree, renderable_lines};
+    use super::{construct_shadow_tree, renderable_lines, ShadowTreeCursor};
     use crate::{
         lines::Line,
         testing::{arb_json, json_to_lines},
@@ -555,6 +608,16 @@ mod tests {
             let shadow_tree = construct_shadow_tree(&values);
             let actual_lines : Vec<Line> = renderable_lines(0, &shadow_tree, &values).map(|(_, line)| line).collect();
             let expected_lines = json_to_lines(values.iter());
+            assert_eq!(actual_lines, expected_lines);
+        }
+    }
+    proptest! {
+        #[test]
+        fn prop_cursor(values in proptest::collection::vec(arb_json(), 1..10)) {
+            let shadow_tree = construct_shadow_tree(&values);
+            let mut cursor = ShadowTreeCursor::new(&shadow_tree, &values);
+            let expected_lines = json_to_lines(values.iter());
+            let actual_lines :Vec<Line>= (0..expected_lines.len()).filter_map(|i| cursor.seek(i)).collect();
             assert_eq!(actual_lines, expected_lines);
         }
     }

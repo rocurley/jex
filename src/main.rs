@@ -1,10 +1,10 @@
 use argh::FromArgs;
 use serde_json::{value::Value, Deserializer};
-use std::{fs, io, io::Write, ops::RangeInclusive};
+use std::{fs, io, ops::RangeInclusive};
 use termion::{
     event::Key,
     input::{MouseTerminal, TermRead},
-    raw::{IntoRawMode, RawTerminal},
+    raw::IntoRawMode,
     screen::AlternateScreen,
 };
 use tui::{
@@ -23,10 +23,9 @@ use cpuprofiler::PROFILER;
 use jed::lines::memory::{MemoryStat, MemoryStats};
 use jed::{
     jq::{run_jq_query, JQ},
-    shadow_tree,
     shadow_tree::{
         construct_shadow_tree, next_displayable_line, prior_displayable_line, render_lines,
-        renderable_lines, Shadow,
+        renderable_lines, Shadow, ShadowTreeCursor,
     },
 };
 #[cfg(feature = "dev-tools")]
@@ -150,8 +149,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
     terminal.draw(app.render(AppRenderMode::Normal))?;
     let mut rl: rustyline::Editor<()> = rustyline::Editor::new();
     // rl.bind_sequence(rustyline::KeyPress::Tab, rustyline::Cmd::Interrupt);
-    let mut keys = stdin.keys();
-    while let Some(c) = keys.next() {
+    for c in stdin.keys() {
         let c = c?;
         //
         match c {
@@ -161,6 +159,8 @@ fn run(json_path: String) -> Result<(), io::Error> {
                 match rl.readline_with_initial("", (&app.query, "")) {
                     Ok(new_query) => {
                         app.query = new_query;
+                        // Just in case rustyline messed stuff up
+                        force_draw(&mut terminal, app.render(AppRenderMode::Normal))?;
                         app.recompute_right();
                     }
                     Err(_) => {}
@@ -214,14 +214,12 @@ fn run(json_path: String) -> Result<(), io::Error> {
                 }
                 Key::Char('z') => {
                     if let Some(i) = view.cursor.as_mut() {
-                        let (new_i, shadow) = shadow_tree::mutable::index_shadow(
-                            *i,
-                            &mut view.shadow_tree,
-                            &view.values,
-                        )
-                        .expect("Cursor should not be able to reach an invalid index");
-                        *i = new_i;
-                        shadow.folded = !shadow.folded;
+                        let mut cursor = ShadowTreeCursor::new(&view.shadow_tree, &view.values);
+                        cursor
+                            .seek(*i)
+                            .expect("Cursor should not be able to reach an invalid index");
+                        cursor.toggle_fold();
+                        *i = cursor.index;
                     }
                 }
                 _ => {}
@@ -366,8 +364,6 @@ fn sizes() -> Result<(), io::Error> {
     dbg!(size_of::<jed::shadow_tree::Shadow>());
     Ok(())
 }
-
-type Screen = AlternateScreen<MouseTerminal<RawTerminal<io::Stdout>>>;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 enum Focus {
@@ -525,10 +521,10 @@ impl App {
             View::Error(_) => {}
         }
     }
-    fn render<'a, B: tui::backend::Backend>(
-        &'a mut self,
+    fn render<B: tui::backend::Backend>(
+        &mut self,
         mode: AppRenderMode,
-    ) -> impl FnMut(&mut Frame<B>) + 'a {
+    ) -> impl FnMut(&mut Frame<B>) + '_ {
         let App {
             left,
             right,
