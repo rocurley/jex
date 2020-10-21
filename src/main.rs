@@ -22,7 +22,7 @@ use cpuprofiler::PROFILER;
 #[cfg(feature = "dev-tools")]
 use jed::lines::memory::{MemoryStat, MemoryStats};
 use jed::{
-    jq::{run_jq_query, JQ},
+    jq::{jv::JV, run_jq_query, JQ},
     shadow_tree::{
         construct_shadow_tree, next_displayable_line, prior_displayable_line, render_lines,
         renderable_lines, Shadow, ShadowTreeCursor,
@@ -394,7 +394,7 @@ enum View {
 }
 
 impl View {
-    fn new(values: Vec<Value>) -> Self {
+    fn new(values: Vec<JV>) -> Self {
         View::Json(JsonView::new(values))
     }
     fn render(&self, line_limit: u16, has_focus: bool) -> Paragraph {
@@ -417,13 +417,13 @@ impl View {
 #[derive(Debug, Clone)]
 struct JsonView {
     scroll: usize,
-    values: Vec<Value>,
+    values: Vec<JV>,
     shadow_tree: Shadow,
     cursor: Option<usize>,
 }
 
 impl JsonView {
-    fn new(values: Vec<Value>) -> Self {
+    fn new(values: Vec<JV>) -> Self {
         let shadow_tree = construct_shadow_tree(&values);
         let cursor = if values.is_empty() { None } else { Some(0) };
         JsonView {
@@ -500,10 +500,12 @@ enum AppRenderMode {
 
 impl App {
     fn new<R: io::Read>(r: R) -> io::Result<Self> {
+        // TODO: Don't allocate a vec of values
         let content: Vec<Value> = Deserializer::from_reader(r)
             .into_iter::<Value>()
             .collect::<Result<Vec<Value>, _>>()?;
-        let left = View::new(content);
+        let jvs = content.iter().map(|value| value.into()).collect();
+        let left = View::new(jvs);
         let mut app = App {
             left,
             right: None,

@@ -1,11 +1,11 @@
 use jq_sys::{
-    jv, jv_array, jv_array_get, jv_array_length, jv_array_set, jv_bool, jv_copy, jv_free,
+    jv, jv_array, jv_array_get, jv_array_length, jv_array_set, jv_bool, jv_copy, jv_equal, jv_free,
     jv_get_kind, jv_invalid_get_msg, jv_invalid_has_msg, jv_kind_JV_KIND_ARRAY,
     jv_kind_JV_KIND_FALSE, jv_kind_JV_KIND_INVALID, jv_kind_JV_KIND_NULL, jv_kind_JV_KIND_NUMBER,
     jv_kind_JV_KIND_OBJECT, jv_kind_JV_KIND_STRING, jv_kind_JV_KIND_TRUE, jv_null, jv_number,
     jv_number_value, jv_object, jv_object_iter, jv_object_iter_key, jv_object_iter_next,
-    jv_object_iter_valid, jv_object_iter_value, jv_object_set, jv_string_length_bytes,
-    jv_string_sized, jv_string_value,
+    jv_object_iter_valid, jv_object_iter_value, jv_object_length, jv_object_set,
+    jv_string_length_bytes, jv_string_sized, jv_string_value,
 };
 use serde_json::value::Value;
 use std::{
@@ -51,6 +51,16 @@ impl Clone for JVRaw {
         }
     }
 }
+
+impl PartialEq for JVRaw {
+    fn eq(&self, other: &Self) -> bool {
+        let self_ptr = self.clone().unwrap_without_drop();
+        let other_ptr = other.clone().unwrap_without_drop();
+        let res = unsafe { jv_equal(self_ptr, other_ptr) };
+        res != 0
+    }
+}
+impl Eq for JVRaw {}
 
 impl JVRaw {
     pub fn unwrap_without_drop(self) -> jv {
@@ -142,7 +152,10 @@ impl JVRaw {
         };
         str::from_utf8(slice).expect("JQ strings are supposed to be UTF-8")
     }
-    pub fn object_iter(&self) -> impl Iterator<Item = (String, JVRaw)> + '_ {
+    pub fn object_len(&self) -> i32 {
+        unsafe { jv_object_length(self.clone().unwrap_without_drop()) }
+    }
+    pub fn object_iter(&self) -> impl ExactSizeIterator<Item = (String, JVRaw)> + '_ {
         let i = unsafe { jv_object_iter(self.ptr) };
         ObjectIterator { i, obj: self }
     }
@@ -154,7 +167,7 @@ impl JVRaw {
             ptr: unsafe { jv_array_get(self.clone().unwrap_without_drop(), i) },
         }
     }
-    pub fn array_iter(&self) -> impl Iterator<Item = JVRaw> + '_ {
+    pub fn array_iter(&self) -> impl ExactSizeIterator<Item = JVRaw> + '_ {
         let len = self.array_len();
         (0..len).into_iter().map(move |i| self.array_get(i))
     }
@@ -243,22 +256,28 @@ impl<'a> Iterator for ObjectIterator<'a> {
         self.i = unsafe { jv_object_iter_next(self.obj.ptr, self.i) };
         Some((k.string_value().into(), v))
     }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = self.obj.object_len() as usize;
+        (len, Some(len))
+    }
 }
 
-#[derive(Debug, Clone)]
+impl<'a> ExactSizeIterator for ObjectIterator<'a> {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JVNull(JVRaw);
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JVBool(JVRaw);
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JVNumber(JVRaw);
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JVString(JVRaw);
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JVArray(JVRaw);
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JVObject(JVRaw);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JV {
     Null(JVNull),
     Bool(JVBool),
@@ -307,7 +326,7 @@ impl JVArray {
     pub fn set(&mut self, i: i32, v: JV) {
         self.0.array_set(i, v.into())
     }
-    pub fn iter(&self) -> impl Iterator<Item = JV> + '_ {
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = JV> + '_ {
         self.0.array_iter().map(|v| {
             v.try_into()
                 .expect("JV should not have nested invalid value")
@@ -336,7 +355,7 @@ impl JVObject {
     pub fn set(&mut self, k: &str, v: JV) {
         self.0.object_set(k, v.into())
     }
-    pub fn iter(&self) -> impl Iterator<Item = (String, JV)> + '_ {
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (String, JV)> + '_ {
         self.0.object_iter().map(|(k, v)| {
             (
                 k,

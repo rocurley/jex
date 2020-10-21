@@ -1,6 +1,4 @@
-use serde_json::value::Number;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Line {
     pub content: LineContent,
     pub key: Option<Box<str>>,
@@ -26,11 +24,11 @@ pub fn next_displayable_line_raw(i: usize, line: &Line) -> usize {
     i + delta
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum LineContent {
     Null,
     Bool(bool),
-    Number(Number),
+    Number(f64),
     String(Box<str>),
     ArrayStart(usize),
     ArrayEnd(usize),

@@ -1,18 +1,17 @@
 pub mod jv;
 
 use jq_sys::{jq_compile, jq_init, jq_next, jq_set_error_cb, jq_start, jq_state, jq_teardown};
-use jv::{JVKind, JVRaw};
-use serde_json::value::Value;
-use std::{ffi::CString, os::raw::c_void};
+use jv::{JVKind, JVRaw, JV};
+use std::{convert::TryInto, ffi::CString, os::raw::c_void};
 
-pub fn run_jq_query<'a, I: IntoIterator<Item = &'a Value>>(
+pub fn run_jq_query<'a, I: IntoIterator<Item = &'a JV>>(
     content: I,
     prog: &mut JQ,
-) -> Result<Vec<Value>, String> {
-    let mut results: Vec<Value> = Vec::new();
+) -> Result<Vec<JV>, String> {
+    let mut results: Vec<JV> = Vec::new();
     for value in content {
-        for res in prog.execute(JVRaw::from_serde(value)) {
-            results.push(res.to_serde()?);
+        for res in prog.execute(value.clone().into()) {
+            results.push(res.try_into()?);
         }
     }
     Ok(results)
@@ -106,15 +105,16 @@ impl<'a> Drop for JQResults<'a> {
 #[cfg(test)]
 mod tests {
     use super::{run_jq_query, JVRaw, JQ};
-    use crate::testing::arb_json;
+    use crate::{jq::jv::JV, testing::arb_json};
     use proptest::proptest;
     use serde_json::{json, value::Value};
     use std::cell::RefCell;
-    fn sample_json() -> Value {
-        json!({
+    fn sample_json() -> JV {
+        let val = json!({
             "hello": "world",
             "array": ["a", "b", "c", 1.0, 2.0, 3.0],
-        })
+        });
+        (&val).into()
     }
     #[test]
     fn prop_jq_roundtrip() {
@@ -131,7 +131,7 @@ mod tests {
     fn unit_jq_simple() {
         let mut prog = JQ::compile(".array").unwrap();
         let res = run_jq_query(&[sample_json()], &mut prog).unwrap();
-        assert_eq!(res, vec![json!(["a", "b", "c", 1.0, 2.0, 3.0])]);
+        assert_eq!(res, vec![(&json!(["a", "b", "c", 1.0, 2.0, 3.0])).into()]);
     }
     #[test]
     fn unit_jq_spread() {
@@ -140,12 +140,12 @@ mod tests {
         assert_eq!(
             res,
             vec![
-                json!("a"),
-                json!("b"),
-                json!("c"),
-                json!(1.0),
-                json!(2.0),
-                json!(3.0)
+                (&json!("a")).into(),
+                (&json!("b")).into(),
+                (&json!("c")).into(),
+                (&json!(1.0)).into(),
+                (&json!(2.0)).into(),
+                (&json!(3.0)).into()
             ]
         );
     }

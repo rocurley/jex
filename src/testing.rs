@@ -65,7 +65,13 @@ fn json_to_lines_inner(
             1
         }
         Value::Number(x) => {
-            push_line(key, LineContent::Number(x.clone()), indent, out, comma);
+            push_line(
+                key,
+                LineContent::Number(x.as_f64().unwrap()),
+                indent,
+                out,
+                comma,
+            );
             1
         }
         Value::String(s) => {
