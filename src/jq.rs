@@ -1,9 +1,7 @@
 pub mod jv;
 
-use jq_sys::{
-    jq_compile, jq_format_error, jq_init, jq_next, jq_set_error_cb, jq_start, jq_state, jq_teardown,
-};
-use jv::{JVKind, JV};
+use jq_sys::{jq_compile, jq_init, jq_next, jq_set_error_cb, jq_start, jq_state, jq_teardown};
+use jv::{JVKind, JVRaw};
 use serde_json::value::Value;
 use std::{ffi::CString, os::raw::c_void};
 
@@ -13,8 +11,7 @@ pub fn run_jq_query<'a, I: IntoIterator<Item = &'a Value>>(
 ) -> Result<Vec<Value>, String> {
     let mut results: Vec<Value> = Vec::new();
     for value in content {
-        let jv = JV::from_serde(value);
-        for res in prog.execute(jv) {
+        for res in prog.execute(JVRaw::from_serde(value)) {
             results.push(res.to_serde()?);
         }
     }
@@ -26,7 +23,7 @@ pub struct JQ {
     ptr: *mut jq_state,
     // We want to make sure the vec pointer doesn't move, so we can keep pushing to it.
     #[allow(clippy::box_vec)]
-    errors: Box<Vec<JV>>,
+    errors: Box<Vec<JVRaw>>,
 }
 
 impl Drop for JQ {
@@ -39,11 +36,11 @@ impl JQ {
     fn new() -> Self {
         let ptr = unsafe { jq_init() };
         let mut errors = Box::new(Vec::new());
-        let err_ptr = (errors.as_mut() as *mut Vec<JV>) as *mut c_void;
+        let err_ptr = (errors.as_mut() as *mut Vec<JVRaw>) as *mut c_void;
         unsafe { jq_set_error_cb(ptr, Some(jq_error_callback), err_ptr) };
         JQ { ptr, errors }
     }
-    pub fn take_errors(&mut self) -> impl Iterator<Item = JV> + '_ {
+    fn take_errors(&mut self) -> impl Iterator<Item = JVRaw> + '_ {
         self.errors.as_mut().drain(..)
     }
     pub fn compile(s: &str) -> Result<Self, Vec<String>> {
@@ -60,22 +57,17 @@ impl JQ {
             Err(strings)
         }
     }
-    pub fn execute(&mut self, input: JV) -> impl Iterator<Item = JV> + '_ {
-        unsafe { jq_start(self.ptr, input.unwrap_without_drop(), 0) };
+    fn execute(&mut self, input: JVRaw) -> impl Iterator<Item = JVRaw> + '_ {
+        let raw: JVRaw = input.into();
+        unsafe { jq_start(self.ptr, raw.unwrap_without_drop(), 0) };
         JQResults { jq: self }
     }
 }
 
 unsafe extern "C" fn jq_error_callback(data_pointer: *mut c_void, data: jq_sys::jv) {
-    let casted_pointer = data_pointer as *mut Vec<JV>;
+    let casted_pointer = data_pointer as *mut Vec<JVRaw>;
     if let Some(errors) = casted_pointer.as_mut() {
-        errors.push(JV { ptr: data });
-    }
-}
-
-pub fn format_jq_error(jv: JV) -> JV {
-    JV {
-        ptr: unsafe { jq_format_error(jv.unwrap_without_drop()) },
+        errors.push(JVRaw { ptr: data });
     }
 }
 
@@ -84,9 +76,9 @@ struct JQResults<'a> {
 }
 
 impl<'a> Iterator for JQResults<'a> {
-    type Item = JV;
+    type Item = JVRaw;
     fn next(&mut self) -> Option<Self::Item> {
-        let res = JV {
+        let res = JVRaw {
             ptr: unsafe { jq_next(self.jq.ptr) },
         };
         match res.get_kind() {
@@ -113,7 +105,7 @@ impl<'a> Drop for JQResults<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{run_jq_query, JQ, JV};
+    use super::{run_jq_query, JVRaw, JQ};
     use crate::testing::arb_json;
     use proptest::proptest;
     use serde_json::{json, value::Value};
@@ -129,7 +121,7 @@ mod tests {
         let jq = JQ::compile(".").unwrap();
         let jq_cell = RefCell::new(jq);
         proptest!(move |(value in arb_json())| {
-            let jv = JV::from_serde(&value);
+            let jv = JVRaw::from_serde(&value);
             let mut jq = jq_cell.borrow_mut();
             let results : Vec<Value> = jq.execute(jv).map(|jv| jv.to_serde().unwrap()).collect();
             assert_eq!(vec![value], results);
