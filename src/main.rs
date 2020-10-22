@@ -19,8 +19,6 @@ use unicode_width::UnicodeWidthStr;
 
 #[cfg(feature = "dev-tools")]
 use cpuprofiler::PROFILER;
-#[cfg(feature = "dev-tools")]
-use jed::lines::memory::{MemoryStat, MemoryStats};
 use jed::{
     jq::{jv::JV, run_jq_query, JQ},
     shadow_tree::{
@@ -46,8 +44,6 @@ struct Args {
 enum Mode {
     Normal(NormalMode),
     Bench(BenchMode),
-    Memory(MemoryMode),
-    Sizes(SizesMode),
 }
 
 #[derive(FromArgs, PartialEq, Debug)]
@@ -59,16 +55,6 @@ struct NormalMode {}
 #[argh(subcommand, name = "bench")]
 /// Benchmark loading a json file
 struct BenchMode {}
-
-#[derive(FromArgs, PartialEq, Debug)]
-#[argh(subcommand, name = "memory")]
-/// Break down memory usage from loading a json file
-struct MemoryMode {}
-
-#[derive(FromArgs, PartialEq, Debug)]
-#[argh(subcommand, name = "sizes")]
-/// Print the sizes of various data structures
-struct SizesMode {}
 
 // TODO
 // * Large file perf (181 mb): 13.68 sec
@@ -96,8 +82,6 @@ fn main() -> Result<(), io::Error> {
     match args.mode {
         Mode::Normal(_) => run(args.json_path),
         Mode::Bench(_) => bench(args.json_path),
-        Mode::Memory(_) => memory(args.json_path),
-        Mode::Sizes(_) => sizes(),
     }
 }
 
@@ -239,129 +223,6 @@ fn bench(json_path: String) -> Result<(), io::Error> {
     App::new(r)?;
     let mut profiler = PROFILER.lock().unwrap();
     profiler.stop().unwrap();
-    Ok(())
-}
-
-#[cfg(feature = "dev-tools")]
-fn percent(num: usize, denom: usize) -> String {
-    format!("{:2.0}%", (num * 100) as f64 / denom as f64)
-}
-
-#[cfg(feature = "dev-tools")]
-fn memory(json_path: String) -> Result<(), io::Error> {
-    let f = fs::File::open(json_path)?;
-    let r = io::BufReader::new(f);
-    let app = App::new(r)?;
-    let view = match app.left {
-        View::Json(v) => v,
-        View::Error(_) => panic!("Expected non-error view"),
-    };
-    let memory_stats = MemoryStats::from_lines(&view.lines);
-    let line_size = std::mem::size_of::<Line>();
-    let mut line_stats = vec![
-        ("Null", memory_stats.null),
-        ("Bool", memory_stats.bool),
-        ("Number", memory_stats.number),
-        ("String", memory_stats.string),
-        ("ArrayStart", memory_stats.array_start),
-        ("ArrayEnd", memory_stats.array_end),
-        ("ObjectStart", memory_stats.object_start),
-        ("ObjectEnd", memory_stats.object_end),
-        ("ValueTerminator", memory_stats.value_terminator),
-        ("Key", memory_stats.key),
-    ];
-    let comma_count = memory_stats.null.count
-        + memory_stats.bool.count
-        + memory_stats.number.count
-        + memory_stats.string.count
-        - memory_stats.value_terminator.count;
-    line_stats.push((
-        "Comma",
-        MemoryStat {
-            count: comma_count,
-            indirect_bytes: 0,
-            json_size: comma_count,
-        },
-    ));
-    let mut lines_total = MemoryStat::default();
-    for (_, stat) in line_stats.iter() {
-        lines_total += *stat;
-    }
-    line_stats.push(("Total", lines_total));
-    let mut direct_table = Table::new();
-    direct_table.add_row(row!["Type", "Count", "Bytes", "Fraction"]);
-    for (ty, stat) in &line_stats {
-        direct_table.add_row(row![
-            ty,
-            stat.count,
-            stat.count * line_size,
-            percent(stat.count, lines_total.count)
-        ]);
-    }
-    println!(
-        "Direct memory usage {}",
-        percent(
-            lines_total.count * line_size,
-            lines_total.count * line_size + lines_total.indirect_bytes
-        )
-    );
-    direct_table.printstd();
-    println!(
-        "Indirect memory usage {}",
-        percent(
-            lines_total.indirect_bytes,
-            lines_total.count * line_size + lines_total.indirect_bytes
-        )
-    );
-    ptable!(
-        ["Type", "Bytes", "Fraction"],
-        [
-            "String",
-            memory_stats.string.indirect_bytes,
-            percent(
-                memory_stats.string.indirect_bytes,
-                lines_total.indirect_bytes
-            )
-        ],
-        [
-            "Key",
-            memory_stats.string.indirect_bytes,
-            percent(memory_stats.key.indirect_bytes, lines_total.indirect_bytes)
-        ]
-    );
-    let mut json_table = Table::new();
-    json_table.add_row(row!["Type", "Bytes", "Fraction"]);
-    for (ty, stat) in &line_stats {
-        json_table.add_row(row![
-            ty,
-            stat.json_size,
-            percent(stat.json_size, lines_total.json_size)
-        ]);
-    }
-    println!(
-        "Original JSON (estimated) {}",
-        percent(
-            lines_total.json_size,
-            lines_total.count * line_size + lines_total.indirect_bytes
-        )
-    );
-    json_table.printstd();
-    Ok(())
-}
-
-#[cfg(feature = "dev-tools")]
-fn sizes() -> Result<(), io::Error> {
-    use serde_json::{map::Map, Number};
-    use std::mem::size_of;
-    dbg!(size_of::<Line>());
-    dbg!(size_of::<LineContent>());
-    dbg!(size_of::<Option<String>>());
-    dbg!(size_of::<Option<Box<str>>>());
-    dbg!(size_of::<usize>());
-    dbg!(size_of::<Number>());
-    dbg!(size_of::<Value>());
-    dbg!(size_of::<Map<String, Value>>());
-    dbg!(size_of::<jed::shadow_tree::Shadow>());
     Ok(())
 }
 
