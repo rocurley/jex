@@ -484,6 +484,7 @@ dependencies = [
  "prettytable-rs",
  "proptest",
  "rustyline 6.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "serde",
  "serde_json",
  "termion",
  "tui",

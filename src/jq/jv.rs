@@ -7,6 +7,10 @@ use jq_sys::{
     jv_object_iter_valid, jv_object_iter_value, jv_object_length, jv_object_set,
     jv_string_length_bytes, jv_string_sized, jv_string_value,
 };
+use serde::{
+    de::{MapAccess, SeqAccess, Visitor},
+    Deserialize,
+};
 use serde_json::value::Value;
 use std::{
     convert::{TryFrom, TryInto},
@@ -453,15 +457,110 @@ impl From<JV> for JVRaw {
     }
 }
 
+impl<'de> Deserialize<'de> for JV {
+    #[inline]
+    fn deserialize<D>(deserializer: D) -> Result<JV, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct JVVisitor;
+
+        impl<'de> Visitor<'de> for JVVisitor {
+            type Value = JV;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("any valid JSON value")
+            }
+
+            #[inline]
+            fn visit_bool<E>(self, value: bool) -> Result<JV, E> {
+                Ok(JVBool::new(value).into())
+            }
+
+            #[inline]
+            fn visit_i64<E>(self, value: i64) -> Result<JV, E> {
+                Ok(JVNumber::new(value as f64).into())
+            }
+
+            #[inline]
+            fn visit_u64<E>(self, value: u64) -> Result<JV, E> {
+                Ok(JVNumber::new(value as f64).into())
+            }
+
+            #[inline]
+            fn visit_f64<E>(self, value: f64) -> Result<JV, E> {
+                Ok(JVNumber::new(value).into())
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<JV, E> {
+                Ok(JVString::new(value).into())
+            }
+
+            fn visit_string<E>(self, value: String) -> Result<JV, E> {
+                Ok(JVString::new(&value).into())
+            }
+
+            #[inline]
+            fn visit_none<E>(self) -> Result<JV, E> {
+                Ok(JVNull::new().into())
+            }
+
+            #[inline]
+            fn visit_some<D>(self, deserializer: D) -> Result<JV, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                Deserialize::deserialize(deserializer)
+            }
+
+            #[inline]
+            fn visit_unit<E>(self) -> Result<JV, E> {
+                Ok(JVNull::new().into())
+            }
+
+            #[inline]
+            fn visit_seq<V>(self, mut visitor: V) -> Result<JV, V::Error>
+            where
+                V: SeqAccess<'de>,
+            {
+                let mut i = 0;
+                let mut arr = JVArray::new();
+
+                while let Some(elem) = visitor.next_element()? {
+                    arr.set(i, elem);
+                    i += 1;
+                }
+
+                Ok(arr.into())
+            }
+
+            fn visit_map<V>(self, mut visitor: V) -> Result<JV, V::Error>
+            where
+                V: MapAccess<'de>,
+            {
+                let mut obj = JVObject::new();
+
+                while let Some((key, value)) = visitor.next_entry::<String, _>()? {
+                    obj.set(&key, value);
+                }
+
+                Ok(obj.into())
+            }
+        }
+
+        deserializer.deserialize_any(JVVisitor)
+    }
+}
 #[cfg(test)]
 mod tests {
-    use super::JVRaw;
+    use super::JV;
     use crate::testing::arb_json;
     use proptest::proptest;
     use serde_json::{json, value::Value};
+    use std::convert::TryInto;
     fn test_jv_roundtrip(value: Value) {
-        let jv = JVRaw::from_serde(&value);
-        let roundtrip = jv.to_serde().unwrap();
+        let jv: JV = (&value).into();
+        let roundtrip: Value = (&jv).try_into().unwrap();
         assert_eq!(value, roundtrip);
     }
     #[test]
@@ -492,6 +591,16 @@ mod tests {
         #[test]
         fn prop_jv_roundtrip(value in arb_json()) {
             test_jv_roundtrip(value);
+        }
+    }
+    proptest! {
+        #[test]
+        fn prop_jv_deserialize(value in arb_json()) {
+            let s = serde_json::to_string(&value)?;
+            let jv : JV= serde_json::from_str(&s)?;
+            let via_jv: Value = (&jv).try_into().unwrap();
+            let via_str: Value = serde_json::from_str(&s)?;
+            assert_eq!(via_jv, via_str);
         }
     }
 }

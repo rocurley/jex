@@ -1,5 +1,5 @@
 use argh::FromArgs;
-use serde_json::{value::Value, Deserializer};
+use serde_json::Deserializer;
 use std::{fs, io, ops::RangeInclusive};
 use termion::{
     event::Key,
@@ -501,11 +501,11 @@ enum AppRenderMode {
 impl App {
     fn new<R: io::Read>(r: R) -> io::Result<Self> {
         // TODO: Don't allocate a vec of values
-        let content: Vec<Value> = Deserializer::from_reader(r)
-            .into_iter::<Value>()
-            .collect::<Result<Vec<Value>, _>>()?;
-        let jvs = content.iter().map(|value| value.into()).collect();
-        let left = View::new(jvs);
+        let content: Vec<JV> = Deserializer::from_reader(r)
+            .into_iter::<JV>()
+            .collect::<Result<Vec<JV>, _>>()?;
+        //let jvs = content.iter().map(|value| value.into()).collect();
+        let left = View::new(content);
         let mut app = App {
             left,
             right: None,
