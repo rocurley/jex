@@ -48,7 +48,7 @@ fn bench_render(c: &mut Criterion) {
 
 fn bench_load_direct(c: &mut Criterion) {
     c.bench_function("bench_load_direct", |bench| {
-        let s = fs::read_to_string("citylots.json").expect("cannot read file");
+        let s = fs::read_to_string("example.json").expect("cannot read file");
         bench.iter(|| {
             let content: Vec<JV> = Deserializer::from_str(&s)
                 .into_iter::<JV>()
@@ -61,7 +61,7 @@ fn bench_load_direct(c: &mut Criterion) {
 
 fn bench_load_indirect(c: &mut Criterion) {
     c.bench_function("bench_load_indirect", |bench| {
-        let s = fs::read_to_string("citylots.json").expect("cannot read file");
+        let s = fs::read_to_string("example.json").expect("cannot read file");
         bench.iter(|| {
             let content: Vec<Value> = Deserializer::from_str(&s)
                 .into_iter::<Value>()
@@ -70,6 +70,13 @@ fn bench_load_indirect(c: &mut Criterion) {
             let jvs: Vec<JV> = content.iter().map(JV::from).collect();
             jvs
         })
+    });
+}
+
+fn bench_load_native(c: &mut Criterion) {
+    c.bench_function("bench_load_native", |bench| {
+        let s = fs::read_to_string("example.json").expect("cannot read file");
+        bench.iter(|| JV::parse_native(&s))
     });
 }
 struct Profiler {}
@@ -100,5 +107,6 @@ criterion_group!(
         bench_render,
         bench_load_direct,
         bench_load_indirect,
+        bench_load_native,
 );
 criterion_main!(benches);

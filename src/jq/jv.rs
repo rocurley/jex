@@ -4,7 +4,7 @@ use jq_sys::{
     jv_kind_JV_KIND_FALSE, jv_kind_JV_KIND_INVALID, jv_kind_JV_KIND_NULL, jv_kind_JV_KIND_NUMBER,
     jv_kind_JV_KIND_OBJECT, jv_kind_JV_KIND_STRING, jv_kind_JV_KIND_TRUE, jv_null, jv_number,
     jv_number_value, jv_object, jv_object_iter, jv_object_iter_key, jv_object_iter_next,
-    jv_object_iter_valid, jv_object_iter_value, jv_object_length, jv_object_set,
+    jv_object_iter_valid, jv_object_iter_value, jv_object_length, jv_object_set, jv_parse_sized,
     jv_string_length_bytes, jv_string_sized, jv_string_value,
 };
 use serde::{
@@ -213,6 +213,13 @@ impl JVRaw {
                     })
                     .collect(),
             )),
+        }
+    }
+    pub fn parse_native(s: &str) -> Self {
+        JVRaw {
+            ptr: unsafe {
+                jv_parse_sized(s.as_ptr() as *const c_char, s.len().try_into().unwrap())
+            },
         }
     }
 }
@@ -549,6 +556,12 @@ impl<'de> Deserialize<'de> for JV {
         }
 
         deserializer.deserialize_any(JVVisitor)
+    }
+}
+
+impl JV {
+    pub fn parse_native(s: &str) -> Result<Self, String> {
+        JVRaw::parse_native(s).try_into()
     }
 }
 #[cfg(test)]
