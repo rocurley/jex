@@ -1,8 +1,7 @@
 use cpuprofiler::PROFILER;
 use criterion::{criterion_group, criterion_main, Criterion};
 use jed::{
-    jq::{run_jq_query, JQ},
-    lines::{json_to_lines, render_lines},
+    jq::{jv::JV, run_jq_query, JQ},
     shadow_tree,
     shadow_tree::construct_shadow_tree,
 };
@@ -14,61 +13,63 @@ fn bench_jq_roundtrip(c: &mut Criterion) {
         let mut prog = JQ::compile(".").expect("jq compilation error");
         let f = fs::File::open("example.json").expect("cannot open file");
         let r = io::BufReader::new(f);
-        let content: Vec<Value> = Deserializer::from_reader(r)
-            .into_iter::<Value>()
-            .collect::<Result<Vec<Value>, _>>()
+        let content: Vec<JV> = Deserializer::from_reader(r)
+            .into_iter::<JV>()
+            .collect::<Result<Vec<JV>, _>>()
             .expect("serde deserialization error");
         bench.iter(|| run_jq_query(&content, &mut prog))
     });
 }
 
-fn bench_render_preprocessing_old(c: &mut Criterion) {
-    c.bench_function("render_preprocessing_old", |bench| {
+fn bench_render_preprocessing(c: &mut Criterion) {
+    c.bench_function("render_preprocessing", |bench| {
         let f = fs::File::open("example.json").expect("cannot open file");
         let r = io::BufReader::new(f);
-        let content: Vec<Value> = Deserializer::from_reader(r)
-            .into_iter::<Value>()
-            .collect::<Result<Vec<Value>, _>>()
-            .expect("serde deserialization error");
-        bench.iter(|| json_to_lines(content.iter()))
-    });
-}
-
-fn bench_render_preprocessing_new(c: &mut Criterion) {
-    c.bench_function("render_preprocessing_new", |bench| {
-        let f = fs::File::open("example.json").expect("cannot open file");
-        let r = io::BufReader::new(f);
-        let content: Vec<Value> = Deserializer::from_reader(r)
-            .into_iter::<Value>()
-            .collect::<Result<Vec<Value>, _>>()
+        let content: Vec<JV> = Deserializer::from_reader(r)
+            .into_iter::<JV>()
+            .collect::<Result<Vec<JV>, _>>()
             .expect("serde deserialization error");
         bench.iter(|| construct_shadow_tree(&content))
     });
 }
 
-fn bench_render_old(c: &mut Criterion) {
-    c.bench_function("render_old", |bench| {
+fn bench_render(c: &mut Criterion) {
+    c.bench_function("render", |bench| {
         let f = fs::File::open("citylots.json").expect("cannot open file");
         let r = io::BufReader::new(f);
-        let content: Vec<Value> = Deserializer::from_reader(r)
-            .into_iter::<Value>()
-            .collect::<Result<Vec<Value>, _>>()
-            .expect("serde deserialization error");
-        let lines = json_to_lines(content.iter());
-        bench.iter(|| render_lines(3, 10, Some(5), &lines))
-    });
-}
-
-fn bench_render_new(c: &mut Criterion) {
-    c.bench_function("render_new", |bench| {
-        let f = fs::File::open("citylots.json").expect("cannot open file");
-        let r = io::BufReader::new(f);
-        let content: Vec<Value> = Deserializer::from_reader(r)
-            .into_iter::<Value>()
-            .collect::<Result<Vec<Value>, _>>()
+        let content: Vec<JV> = Deserializer::from_reader(r)
+            .into_iter::<JV>()
+            .collect::<Result<Vec<JV>, _>>()
             .expect("serde deserialization error");
         let shadow_tree = construct_shadow_tree(&content);
         bench.iter(|| shadow_tree::render_lines(3, 10, Some(5), &shadow_tree, &content))
+    });
+}
+
+fn bench_load_direct(c: &mut Criterion) {
+    c.bench_function("bench_load_direct", |bench| {
+        let s = fs::read_to_string("citylots.json").expect("cannot read file");
+        bench.iter(|| {
+            let content: Vec<JV> = Deserializer::from_str(&s)
+                .into_iter::<JV>()
+                .collect::<Result<Vec<JV>, _>>()
+                .expect("serde deserialization error");
+            content
+        })
+    });
+}
+
+fn bench_load_indirect(c: &mut Criterion) {
+    c.bench_function("bench_load_indirect", |bench| {
+        let s = fs::read_to_string("citylots.json").expect("cannot read file");
+        bench.iter(|| {
+            let content: Vec<Value> = Deserializer::from_str(&s)
+                .into_iter::<Value>()
+                .collect::<Result<Vec<Value>, _>>()
+                .expect("serde deserialization error");
+            let jvs: Vec<JV> = content.iter().map(JV::from).collect();
+            jvs
+        })
     });
 }
 struct Profiler {}
@@ -95,9 +96,9 @@ criterion_group!(
     config = profiled();
     targets =
         bench_jq_roundtrip,
-        bench_render_preprocessing_old,
-        bench_render_preprocessing_new,
-        bench_render_old,
-        bench_render_new,
+        bench_render_preprocessing,
+        bench_render,
+        bench_load_direct,
+        bench_load_indirect,
 );
 criterion_main!(benches);
