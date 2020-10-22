@@ -57,8 +57,7 @@ impl JQ {
         }
     }
     fn execute(&mut self, input: JVRaw) -> impl Iterator<Item = JVRaw> + '_ {
-        let raw: JVRaw = input.into();
-        unsafe { jq_start(self.ptr, raw.unwrap_without_drop(), 0) };
+        unsafe { jq_start(self.ptr, input.unwrap_without_drop(), 0) };
         JQResults { jq: self }
     }
 }

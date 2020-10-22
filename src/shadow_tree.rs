@@ -66,7 +66,7 @@ fn construct_shadow_tree_inner(mut i: usize, value: JV) -> Option<Shadow> {
     }
 }
 
-fn shadow_tree_children<'a, I: ExactSizeIterator<Item = JV>>(
+fn shadow_tree_children<I: ExactSizeIterator<Item = JV>>(
     i: &mut usize,
     values: I,
 ) -> Box<[Shadow]> {

@@ -161,7 +161,11 @@ impl JVRaw {
     }
     pub fn object_iter(&self) -> impl ExactSizeIterator<Item = (String, JVRaw)> + '_ {
         let i = unsafe { jv_object_iter(self.ptr) };
-        ObjectIterator { i, obj: self }
+        ObjectIterator {
+            remaining: self.object_len() as usize,
+            i,
+            obj: self,
+        }
     }
     pub fn array_len(&self) -> i32 {
         unsafe { jv_array_length(self.clone().unwrap_without_drop()) }
@@ -245,6 +249,7 @@ impl<'a> FromIterator<(&'a str, JVRaw)> for JVRaw {
 }
 
 struct ObjectIterator<'a> {
+    remaining: usize,
     i: i32,
     obj: &'a JVRaw,
 }
@@ -265,11 +270,11 @@ impl<'a> Iterator for ObjectIterator<'a> {
         // Because jv values are COW, k's string value will stay valid as long as obj lives,
         // so we can return a &'a str. That's too spooky for now though.
         self.i = unsafe { jv_object_iter_next(self.obj.ptr, self.i) };
+        self.remaining -= 1;
         Some((k.string_value().into(), v))
     }
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let len = self.obj.object_len() as usize;
-        (len, Some(len))
+        (self.remaining, Some(self.remaining))
     }
 }
 
@@ -346,6 +351,9 @@ impl JVArray {
     pub fn len(&self) -> i32 {
         self.0.array_len()
     }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
     pub fn get(&self, i: i32) -> Option<JV> {
         if (0..self.len()).contains(&i) {
             Some(
@@ -412,7 +420,6 @@ impl TryFrom<JVRaw> for JV {
     fn try_from(raw: JVRaw) -> Result<Self, Self::Error> {
         match raw.get_kind() {
             JVKind::Invalid => Err(raw
-                .clone()
                 .get_invalid_msg()
                 .unwrap_or_else(|| "No error message".to_owned())),
             JVKind::Null => Ok(JVNull(raw).into()),
@@ -461,6 +468,24 @@ impl From<JV> for JVRaw {
             | JV::Array(JVArray(out))
             | JV::Object(JVObject(out)) => out,
         }
+    }
+}
+
+impl Default for JVNull {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Default for JVArray {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Default for JVObject {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -57,25 +57,10 @@ struct NormalMode {}
 struct BenchMode {}
 
 // TODO
-// * Large file perf (181 mb): 13.68 sec
-//   * Initial parsing (serde): 3.77 sec
-//   * Pre-rendering (lines): 2.29 sec (left and right)
-//   * Query execution: 7.62 sec
-//     * Serde -> JV: 3.38 sec
-//     * Computing result: 0???? (it is the trivial filter)
-//     * JV -> Serde: 3.37 sec
-//   * Rendering is fast!
-// * Improve memory estimates of actual json size.
-// * Arrow key + emacs shortcuts for the query editor
 // * Searching
 // * Long strings
 // * Edit tree, instead of 2 fixed panels
 // * Saving
-// * Speed up query serialization:
-//   * Cut out serde entirely (except for parsing: hilariously, test -> serde -> jv appears to be
-//   faster than text -> jv).
-//   * Multithreaded serde -> jv
-// Start with round trip between serde and jq, save jq -> lines for an optimization.
 #[cfg(feature = "dev-tools")]
 fn main() -> Result<(), io::Error> {
     let args: Args = argh::from_env();
