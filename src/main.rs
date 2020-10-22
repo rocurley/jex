@@ -56,6 +56,33 @@ struct NormalMode {}
 /// Benchmark loading a json file
 struct BenchMode {}
 
+// Large file perf (181 mb):
+// * Old: 13.68 sec
+//   * Initial parsing (serde): 3.77 sec
+//   * Pre-rendering (lines): 2.29 sec (left and right)
+//   * Query execution: 7.62 sec
+//     * Serde -> JV: 3.38 sec
+//     * Computing result: 0???? (it is the trivial filter)
+//     * JV -> Serde: 3.37 sec
+// * New: 10.94 sec
+//   * Initial parsing (JV deserialize): 6.38
+//   * Pre-rendering (shadow tree): 4.50 sec (left and right)
+//   * Query execution: ~0
+//
+// What can we do to improve load times? We create the shadow tree twice, which is wasted: that's
+// arguably an easy win. Note that by that logic we could have eliminated "Query execution"
+// entirely from the old benchmark, as well as half of Pre-rendering, dropping it down to about 5
+// secs. It isn't a total loss, however: we cut memory usage by 2/3 and query execution overhead by
+// about 2/3: we'll make up the time after a single real query, even if the initial trivial query
+// is optimized out.
+//
+// Can we speed up shadow tree construction? Most of the time appears to be spent putzing around
+// inside JV. There seems to be _some_ cost to the JV wrapper around JVRaw, which is unfortunate.
+// We spend a full 1.25 seconds in jv_get_kind, which kind of sucks because we probably do it
+// twice: once in the rust code and once in the c code when validating that the use is proper. We
+// could probably cut out the 2nd half, but we'd need to reach into the private jvp_ API, which
+// doesn't seem like a great plan.
+//
 // TODO
 // * Searching
 // * Long strings
@@ -196,6 +223,9 @@ fn run(json_path: String) -> Result<(), io::Error> {
         }
         terminal.draw(app.render(AppRenderMode::Normal))?;
     }
+    // Gracefully freeing the JV values can take a significant amount of time and doesn't actually
+    // benefit anything: the OS will clean up after us when we exit.
+    std::mem::forget(app);
     Ok(())
 }
 
@@ -205,8 +235,8 @@ fn bench(json_path: String) -> Result<(), io::Error> {
     profiler.start("profile").unwrap();
     let f = fs::File::open(json_path)?;
     let r = io::BufReader::new(f);
-    App::new(r)?;
-    let mut profiler = PROFILER.lock().unwrap();
+    let app = App::new(r)?;
+    std::mem::forget(app);
     profiler.stop().unwrap();
     Ok(())
 }

@@ -55,7 +55,7 @@ fn construct_shadow_tree_inner(mut i: usize, value: JV) -> Option<Shadow> {
         }
         JV::Object(obj) => {
             i += 1; // ObjectStart
-            let children = shadow_tree_children(&mut i, obj.iter().map(|(_, v)| v));
+            let children = shadow_tree_children(&mut i, obj.values());
             Some(Shadow {
                 folded: Cell::new(false),
                 sibling_start_index: i + 1, //ObjectEnd

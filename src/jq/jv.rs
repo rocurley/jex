@@ -167,6 +167,14 @@ impl JVRaw {
             obj: self,
         }
     }
+    pub fn object_values(&self) -> impl ExactSizeIterator<Item = JVRaw> + '_ {
+        let i = unsafe { jv_object_iter(self.ptr) };
+        ObjectValuesIterator {
+            remaining: self.object_len() as usize,
+            i,
+            obj: self,
+        }
+    }
     pub fn array_len(&self) -> i32 {
         unsafe { jv_array_length(self.clone().unwrap_without_drop()) }
     }
@@ -280,6 +288,35 @@ impl<'a> Iterator for ObjectIterator<'a> {
 
 impl<'a> ExactSizeIterator for ObjectIterator<'a> {}
 
+struct ObjectValuesIterator<'a> {
+    remaining: usize,
+    i: i32,
+    obj: &'a JVRaw,
+}
+
+impl<'a> Iterator for ObjectValuesIterator<'a> {
+    type Item = JVRaw;
+    fn next(&mut self) -> Option<Self::Item> {
+        if unsafe { jv_object_iter_valid(self.obj.ptr, self.i) } == 0 {
+            return None;
+        }
+        let v = JVRaw {
+            ptr: unsafe { jv_object_iter_value(self.obj.ptr, self.i) },
+        };
+        // If we wanted to live dangerously, we could say something like this:
+        // Because jv values are COW, k's string value will stay valid as long as obj lives,
+        // so we can return a &'a str. That's too spooky for now though.
+        self.i = unsafe { jv_object_iter_next(self.obj.ptr, self.i) };
+        self.remaining -= 1;
+        Some(v)
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
+impl<'a> ExactSizeIterator for ObjectValuesIterator<'a> {}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JVNull(JVRaw);
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -381,6 +418,12 @@ impl JVObject {
                 v.try_into()
                     .expect("JV should not have nested invalid value"),
             )
+        })
+    }
+    pub fn values(&self) -> impl ExactSizeIterator<Item = JV> + '_ {
+        self.0.object_values().map(|v| {
+            v.try_into()
+                .expect("JV should not have nested invalid value")
         })
     }
 }
