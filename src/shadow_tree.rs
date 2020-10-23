@@ -21,7 +21,13 @@ use tui::{
 // through the tree (ala [1, "key", 7]). This would eliminate the need for sibling_start_index
 // entirely. We'd still need to store folding information somewhere, however. Since we wouldn't be
 // using integer indices, we couldn't use the sparse array representation, and since we want to
-// hold open the option of only using the jv representation, we can't move folded inline.
+// hold open the option of only using the jv representation, we can't move folded inline. Probably
+// the best option left is a hashset of folded fat indices. Since every fold corresponds to a user
+// pushing a button, it probably won't get out of hand. If we change that, say by allowing folding
+// all the children of something, it could be a problem. The flip side of that is if we can just
+// record all the folding operations (probably deduping ones that cancel each other out), we should
+// be able to support abitrary folding shenanigans without totally blowing our memory budget. It's
+// worth noting that JQ has a native concept of paths that might be relevant here.
 #[derive(Debug, Clone)]
 pub struct Shadow {
     // This is a bit sketchy. But the burden of maintaining two (somewhat different) accessors for

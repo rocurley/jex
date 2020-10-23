@@ -81,7 +81,12 @@ struct BenchMode {}
 // We spend a full 1.25 seconds in jv_get_kind, which kind of sucks because we probably do it
 // twice: once in the rust code and once in the c code when validating that the use is proper. We
 // could probably cut out the 2nd half, but we'd need to reach into the private jvp_ API, which
-// doesn't seem like a great plan.
+// doesn't seem like a great plan. Alternatively, we could paralellize the shadow tree
+// construction: right now it's not quite trivial becuase sibling_start_index is global. We could
+// either make it local or construct local ones and then shift them in a final pass (presumably
+// fast, since we don't need drop down into JV).
+//
+// Can we eliminate the shadow tree entirely? Maybe. See comments in shadow_tree.rs.
 //
 // TODO
 // * Searching
