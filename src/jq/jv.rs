@@ -167,6 +167,14 @@ impl JVRaw {
             obj: self,
         }
     }
+    pub fn into_object_iter(self) -> impl ExactSizeIterator<Item = (String, JVRaw)> {
+        let i = unsafe { jv_object_iter(self.ptr) };
+        OwnedObjectIterator {
+            remaining: self.object_len() as usize,
+            i,
+            obj: self,
+        }
+    }
     pub fn object_values(&self) -> impl ExactSizeIterator<Item = JVRaw> + '_ {
         let i = unsafe { jv_object_iter(self.ptr) };
         ObjectValuesIterator {
@@ -184,6 +192,10 @@ impl JVRaw {
         }
     }
     pub fn array_iter(&self) -> impl ExactSizeIterator<Item = JVRaw> + '_ {
+        let len = self.array_len();
+        (0..len).into_iter().map(move |i| self.array_get(i))
+    }
+    pub fn into_array_iter(self) -> impl ExactSizeIterator<Item = JVRaw> {
         let len = self.array_len();
         (0..len).into_iter().map(move |i| self.array_get(i))
     }
@@ -288,6 +300,38 @@ impl<'a> Iterator for ObjectIterator<'a> {
 
 impl<'a> ExactSizeIterator for ObjectIterator<'a> {}
 
+struct OwnedObjectIterator {
+    remaining: usize,
+    i: i32,
+    obj: JVRaw,
+}
+
+impl Iterator for OwnedObjectIterator {
+    type Item = (String, JVRaw);
+    fn next(&mut self) -> Option<Self::Item> {
+        if unsafe { jv_object_iter_valid(self.obj.ptr, self.i) } == 0 {
+            return None;
+        }
+        let k = JVRaw {
+            ptr: unsafe { jv_object_iter_key(self.obj.ptr, self.i) },
+        };
+        let v = JVRaw {
+            ptr: unsafe { jv_object_iter_value(self.obj.ptr, self.i) },
+        };
+        // If we wanted to live dangerously, we could say something like this:
+        // Because jv values are COW, k's string value will stay valid as long as obj lives,
+        // so we can return a &'a str. That's too spooky for now though.
+        self.i = unsafe { jv_object_iter_next(self.obj.ptr, self.i) };
+        self.remaining -= 1;
+        Some((k.string_value().into(), v))
+    }
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
+impl<'a> ExactSizeIterator for OwnedObjectIterator {}
+
 struct ObjectValuesIterator<'a> {
     remaining: usize,
     i: i32,
@@ -385,6 +429,12 @@ impl JVArray {
                 .expect("JV should not have nested invalid value")
         })
     }
+    pub fn into_iter(self) -> impl ExactSizeIterator<Item = JV> {
+        self.0.into_array_iter().map(|v| {
+            v.try_into()
+                .expect("JV should not have nested invalid value")
+        })
+    }
     pub fn len(&self) -> i32 {
         self.0.array_len()
     }
@@ -413,6 +463,15 @@ impl JVObject {
     }
     pub fn iter(&self) -> impl ExactSizeIterator<Item = (String, JV)> + '_ {
         self.0.object_iter().map(|(k, v)| {
+            (
+                k,
+                v.try_into()
+                    .expect("JV should not have nested invalid value"),
+            )
+        })
+    }
+    pub fn into_iter(self) -> impl ExactSizeIterator<Item = (String, JV)> {
+        self.0.into_object_iter().map(|(k, v)| {
             (
                 k,
                 v.try_into()
