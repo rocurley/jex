@@ -1,6 +1,6 @@
 use argh::FromArgs;
 use serde_json::Deserializer;
-use std::{fs, io, ops::RangeInclusive};
+use std::{collections::HashSet, fs, io, ops::RangeInclusive, rc::Rc};
 use termion::{
     event::Key,
     input::{MouseTerminal, TermRead},
@@ -20,11 +20,8 @@ use unicode_width::UnicodeWidthStr;
 #[cfg(feature = "dev-tools")]
 use cpuprofiler::PROFILER;
 use jed::{
+    cursor::{Cursor, Path},
     jq::{jv::JV, run_jq_query, JQ},
-    shadow_tree::{
-        construct_shadow_tree, next_displayable_line, prior_displayable_line, render_lines,
-        renderable_lines, Shadow, ShadowTreeCursor,
-    },
 };
 #[cfg(feature = "dev-tools")]
 use prettytable::{cell, ptable, row, table, Table};
@@ -179,50 +176,27 @@ fn run(json_path: String) -> Result<(), io::Error> {
         match view {
             None => {}
             Some(View::Error(_)) => {}
-            Some(View::Json(view)) => match c {
+            Some(View::Json(None)) => {}
+            Some(View::Json(Some(view))) => match c {
                 Key::Down => {
-                    if let Some(i) = view.cursor.as_mut() {
-                        if let Some(new_i) =
-                            next_displayable_line(*i, &view.shadow_tree, &view.values)
-                        {
-                            *i = new_i;
-                        }
-                        let i = *i; //Return mutable borrow
-                        if !view.visible_range(line_limit).contains(&i) {
-                            view.scroll =
-                                next_displayable_line(view.scroll, &view.shadow_tree, &view.values)
-                                    .expect("Shouldn't be able to scroll off the bottom");
-                        }
+                    view.cursor.advance();
+                    if !view
+                        .visible_range(line_limit)
+                        .contains(&view.cursor.to_path())
+                    {
+                        view.scroll.advance();
                     }
                 }
                 Key::Up => {
-                    if let Some(i) = view.cursor.as_mut() {
-                        if let Some(new_i) =
-                            prior_displayable_line(*i, &view.shadow_tree, &view.values)
-                        {
-                            *i = new_i;
-                        }
-                        let i = *i; //Return mutable borrow
-                        if !view.visible_range(line_limit).contains(&i) {
-                            view.scroll = prior_displayable_line(
-                                view.scroll,
-                                &view.shadow_tree,
-                                &view.values,
-                            )
-                            .expect("Shouldn't be able to scroll off the bottom");
-                        }
+                    view.cursor.regress();
+                    if !view
+                        .visible_range(line_limit)
+                        .contains(&view.cursor.to_path())
+                    {
+                        view.scroll.regress();
                     }
                 }
-                Key::Char('z') => {
-                    if let Some(i) = view.cursor.as_mut() {
-                        let mut cursor = ShadowTreeCursor::new(&view.shadow_tree, &view.values);
-                        cursor
-                            .seek(*i)
-                            .expect("Cursor should not be able to reach an invalid index");
-                        cursor.toggle_fold();
-                        *i = cursor.index;
-                    }
-                }
+                Key::Char('z') => {}
                 _ => {}
             },
         }
@@ -268,9 +242,9 @@ struct App {
     query: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 enum View {
-    Json(JsonView),
+    Json(Option<JsonView>),
     Error(Vec<String>),
 }
 
@@ -280,7 +254,8 @@ impl View {
     }
     fn render(&self, line_limit: u16, has_focus: bool) -> Paragraph {
         match self {
-            View::Json(json_view) => json_view.render(line_limit, has_focus),
+            View::Json(Some(json_view)) => json_view.render(line_limit, has_focus),
+            View::Json(None) => Paragraph::new(Vec::new()),
             View::Error(err) => {
                 let err_text = err
                     .iter()
@@ -295,35 +270,31 @@ impl View {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct JsonView {
-    scroll: usize,
-    values: Vec<JV>,
-    shadow_tree: Shadow,
-    cursor: Option<usize>,
+    scroll: Cursor,
+    values: Rc<[JV]>,
+    cursor: Cursor,
+    folds: HashSet<Path>,
 }
 
 impl JsonView {
-    fn new(values: Vec<JV>) -> Self {
-        let shadow_tree = construct_shadow_tree(&values);
-        let cursor = if values.is_empty() { None } else { Some(0) };
-        JsonView {
-            scroll: 0,
-            values,
-            shadow_tree,
-            cursor,
-        }
-    }
-    fn render(&self, line_limit: u16, has_focus: bool) -> Paragraph {
-        let JsonView {
-            shadow_tree,
-            cursor,
+    fn new(values: Vec<JV>) -> Option<Self> {
+        let values: Rc<[JV]> = values.into();
+        let cursor = Cursor::new(values.clone())?;
+        let scroll = Cursor::new(values.clone())?;
+        let folds = HashSet::new();
+        Some(JsonView {
             scroll,
             values,
-            ..
-        } = self;
-        let cursor = if has_focus { *cursor } else { None };
-        let text = render_lines(*scroll, line_limit, cursor, shadow_tree, values);
+            cursor,
+            folds,
+        })
+    }
+    fn render(&self, line_limit: u16, has_focus: bool) -> Paragraph {
+        let JsonView { cursor, scroll, .. } = self;
+        let cursor = if has_focus { Some(cursor) } else { None };
+        let text = scroll.clone().render_lines(cursor, &self.folds, line_limit);
         Paragraph::new(text)
             .style(Style::default().fg(Color::White).bg(Color::Black))
             .alignment(Alignment::Left)
@@ -331,20 +302,20 @@ impl JsonView {
     }
     fn apply_query(&self, query: &str) -> View {
         match JQ::compile(query) {
-            Ok(mut prog) => match run_jq_query(&self.values, &mut prog) {
+            Ok(mut prog) => match run_jq_query(self.values.iter(), &mut prog) {
                 Ok(results) => View::Json(JsonView::new(results)),
                 Err(err) => View::Error(vec![err]),
             },
             Err(err) => View::Error(err),
         }
     }
-    fn visible_range(&self, line_limit: usize) -> RangeInclusive<usize> {
-        let mut lines = renderable_lines(self.scroll, &self.shadow_tree, &self.values);
-        let first = lines.next().expect("Should have at least one line").0;
-        let last = lines
-            .take(line_limit - 1)
-            .last()
-            .map_or(first, |(last, _)| last);
+    fn visible_range(&self, line_limit: usize) -> RangeInclusive<Path> {
+        let first = self.scroll.to_path();
+        let mut scroll = Cursor::from_path(self.values.clone(), &first);
+        for _ in 0..line_limit {
+            scroll.advance();
+        }
+        let last = scroll.to_path();
         first..=last
     }
 }
@@ -396,8 +367,11 @@ impl App {
     }
     fn recompute_right(&mut self) {
         match &self.left {
-            View::Json(left) => {
+            View::Json(Some(left)) => {
                 self.right = Some(left.apply_query(&self.query));
+            }
+            View::Json(None) => {
+                unimplemented!();
             }
             View::Error(_) => {}
         }

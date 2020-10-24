@@ -2,7 +2,8 @@ use crate::{
     jq::jv::{JVArray, JVObject, JV},
     lines::{Line, LineContent},
 };
-use std::collections::HashSet;
+use std::{collections::HashSet, fmt, rc::Rc};
+use tui::text::Spans;
 
 // Requirements:
 // * Produce the current line
@@ -43,6 +44,29 @@ pub enum CursorFrame {
         json: JVObject,
         iterator: Box<dyn ExactSizeIterator<Item = (String, JV)>>,
     },
+}
+
+impl fmt::Debug for CursorFrame {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            CursorFrame::Array { index, json } => fmt
+                .debug_struct("Array")
+                .field("index", index)
+                .field("json", json)
+                .finish(),
+            CursorFrame::Object {
+                index,
+                key,
+                json,
+                iterator: _,
+            } => fmt
+                .debug_struct("Object")
+                .field("index", index)
+                .field("key", key)
+                .field("json", json)
+                .finish(),
+        }
+    }
 }
 
 impl PartialEq for CursorFrame {
@@ -246,10 +270,10 @@ impl CursorFrame {
     }
 }
 
-#[derive(PartialEq, Eq)]
-pub struct Cursor<'a> {
+#[derive(PartialEq, Eq, Debug)]
+pub struct Cursor {
     // Top level jsons of the view
-    jsons: &'a [JV],
+    jsons: Rc<[JV]>,
     // Index locating the json this cursor is focused (somewhere) on
     top_index: usize,
     // Stores the ancestors of the current focus, the index of their focused child, and an iterator
@@ -262,8 +286,8 @@ pub struct Cursor<'a> {
     focus_position: FocusPosition,
 }
 
-impl<'a> Cursor<'a> {
-    pub fn new(jsons: &'a [JV]) -> Option<Self> {
+impl Cursor {
+    pub fn new(jsons: Rc<[JV]>) -> Option<Self> {
         let focus = jsons.get(0)?.clone();
         let focus_position = FocusPosition::starting(&focus);
         Some(Cursor {
@@ -281,7 +305,7 @@ impl<'a> Cursor<'a> {
             focus_position: self.focus_position,
         }
     }
-    pub fn from_path(jsons: &'a [JV], path: &Path) -> Self {
+    pub fn from_path(jsons: Rc<[JV]>, path: &Path) -> Self {
         let mut focus = jsons[path.top_index].clone();
         let mut frames = Vec::new();
         for &index in path.frames.iter() {
@@ -426,6 +450,36 @@ impl<'a> Cursor<'a> {
         }
         Some(())
     }
+    pub fn lines_from(mut self, folds: &HashSet<Path>) -> impl Iterator<Item = Line> + '_ {
+        let first_line = self.current_line(folds);
+        let rest = std::iter::from_fn(move || {
+            self.advance()?;
+            Some(self.current_line(folds))
+        });
+        std::iter::once(first_line).chain(rest)
+    }
+    pub fn render_lines(
+        mut self,
+        cursor: Option<&Self>,
+        folds: &HashSet<Path>,
+        line_limit: u16,
+    ) -> Vec<Spans<'static>> {
+        let mut lines = Vec::with_capacity(line_limit as usize);
+        lines.push(self.current_line(folds).render(Some(&self) == cursor));
+        for _ in 0..line_limit {
+            if self.advance().is_none() {
+                break;
+            }
+            lines.push(self.current_line(folds).render(Some(&self) == cursor));
+        }
+        lines
+    }
+}
+
+impl Clone for Cursor {
+    fn clone(&self) -> Self {
+        Cursor::from_path(self.jsons.clone(), &self.to_path())
+    }
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone)]
@@ -445,7 +499,7 @@ mod tests {
     };
     use pretty_assertions::assert_eq;
     use proptest::proptest;
-    use std::collections::HashSet;
+    use std::{collections::HashSet, rc::Rc};
 
     fn strip_container_sizes(lines: &mut [Line]) {
         for line in lines {
@@ -465,7 +519,7 @@ mod tests {
             let jsons : Vec<JV> = values.iter().map(|v| v.into()).collect();
             let folds = HashSet::new();
             let mut actual_lines = Vec::new();
-            if let Some(mut cursor) = Cursor::new(&jsons) {
+            if let Some(mut cursor) = Cursor::new(jsons.into()) {
                 actual_lines.push(cursor.current_line(&folds));
                 while let Some(()) = cursor.advance() {
                     actual_lines.push(cursor.current_line(&folds));
@@ -476,19 +530,20 @@ mod tests {
             assert_eq!(actual_lines, expected_lines);
         }
     }
-    fn check_path_roundtrip(cursor: &Cursor, jsons: &[JV]) {
+    fn check_path_roundtrip(cursor: &Cursor, jsons: Rc<[JV]>) {
         let path = cursor.to_path();
         let new_cursor = Cursor::from_path(jsons, &path);
-        assert!(*cursor == new_cursor);
+        assert_eq!(cursor, new_cursor);
     }
     proptest! {
         #[test]
         fn prop_path_roundtrip(values in proptest::collection::vec(arb_json(), 1..10)) {
             let jsons : Vec<JV> = values.iter().map(|v| v.into()).collect();
-            if let Some(mut cursor) = Cursor::new(&jsons) {
-                check_path_roundtrip(&cursor, &jsons);
+            let jsons : Rc<[JV]> = jsons.into();
+            if let Some(mut cursor) = Cursor::new(jsons.clone()) {
+                check_path_roundtrip(&cursor, jsons.clone());
                 while let Some(()) = cursor.advance() {
-                    check_path_roundtrip(&cursor, &jsons);
+                    check_path_roundtrip(&cursor, jsons.clone());
                 }
             }
         }

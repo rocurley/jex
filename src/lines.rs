@@ -1,3 +1,8 @@
+use tui::{
+    style::{Color, Modifier, Style},
+    text::{Span, Spans},
+};
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Line {
     pub content: LineContent,
@@ -34,6 +39,140 @@ pub enum LineContent {
     ArrayEnd(usize),
     ObjectStart(usize),
     ObjectEnd(usize),
+}
+
+impl Line {
+    pub fn render(self, is_cursor: bool) -> Spans<'static> {
+        let indent_span = Span::raw("  ".repeat(self.indent as usize));
+        let mut out = match &self.key {
+            Some(key) => vec![
+                indent_span,
+                Span::raw(format!("{:?}", key)),
+                Span::raw(" : "),
+            ],
+            _ => vec![indent_span],
+        };
+        let style = if is_cursor {
+            Style::default().bg(Color::Blue)
+        } else {
+            Style::default()
+        };
+        match self {
+            Line {
+                content: LineContent::Null,
+                ..
+            } => {
+                out.push(Span::styled("null", style));
+                if self.comma {
+                    out.push(Span::raw(","));
+                }
+            }
+            Line {
+                content: LineContent::String(s),
+                ..
+            } => {
+                out.push(Span::styled(format!("{:?}", s), style));
+                if self.comma {
+                    out.push(Span::raw(","));
+                }
+            }
+            Line {
+                content: LineContent::Bool(b),
+                ..
+            } => {
+                out.push(Span::styled(b.to_string(), style));
+                if self.comma {
+                    out.push(Span::raw(","));
+                }
+            }
+            Line {
+                content: LineContent::Number(x),
+                ..
+            } => {
+                out.push(Span::styled(x.to_string(), style));
+                if self.comma {
+                    out.push(Span::raw(","));
+                }
+            }
+            Line {
+                content: LineContent::ArrayStart(skipped_lines),
+                folded: true,
+                ..
+            } => {
+                out.push(Span::styled("[...]", style));
+                if self.comma {
+                    out.push(Span::raw(","));
+                }
+                out.push(Span::styled(
+                    format!(" ({} lines)", skipped_lines),
+                    Style::default().add_modifier(Modifier::DIM),
+                ));
+            }
+            Line {
+                content: LineContent::ArrayEnd(_),
+                folded: true,
+                ..
+            } => {
+                panic!("Attempted to print close of folded array");
+            }
+            Line {
+                content: LineContent::ArrayStart(_),
+                folded: false,
+                ..
+            } => {
+                out.push(Span::styled("[", style));
+            }
+            Line {
+                content: LineContent::ArrayEnd(_),
+                folded: false,
+                ..
+            } => {
+                out.push(Span::styled("]", style));
+                if self.comma {
+                    out.push(Span::raw(","));
+                }
+            }
+            Line {
+                content: LineContent::ObjectStart(skipped_lines),
+                folded: true,
+                ..
+            } => {
+                out.push(Span::styled("{...}", style));
+                if self.comma {
+                    out.push(Span::raw(","));
+                }
+                out.push(Span::styled(
+                    format!(" ({} lines)", skipped_lines),
+                    Style::default().add_modifier(Modifier::DIM),
+                ));
+            }
+            Line {
+                content: LineContent::ObjectEnd(_),
+                folded: true,
+                ..
+            } => {
+                panic!("Attempted to print close of folded array");
+            }
+            Line {
+                content: LineContent::ObjectStart(_),
+                folded: false,
+                ..
+            } => {
+                out.push(Span::styled("{", style));
+            }
+            Line {
+                content: LineContent::ObjectEnd(_),
+                folded: false,
+                ..
+            } => {
+                out.push(Span::styled("}", style));
+                if self.comma {
+                    out.push(Span::raw(","));
+                }
+            }
+        };
+        Spans::from(out)
+    }
 }
 
 #[cfg(feature = "dev-tools")]
