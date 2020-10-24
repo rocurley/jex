@@ -36,7 +36,6 @@ pub enum CursorFrame {
     Array {
         index: usize,
         json: JVArray,
-        iterator: Box<dyn ExactSizeIterator<Item = JV>>,
     },
     Object {
         index: usize,
@@ -58,7 +57,6 @@ fn open_container(json: JV) -> (Option<CursorFrame>, JV, FocusPosition) {
                         Some(CursorFrame::Array {
                             index: 0,
                             json: arr,
-                            iterator,
                         }),
                         child,
                         focus_position,
@@ -97,13 +95,11 @@ fn open_container_end(json: JV) -> (Option<CursorFrame>, JV, FocusPosition) {
             } else {
                 let index = arr.len() - 1;
                 let child = arr.get(index).expect("Array should not be empty here");
-                let iterator = Box::new(std::iter::empty());
                 let focus_position = FocusPosition::ending(&child);
                 (
                     Some(CursorFrame::Array {
                         index: index as usize,
                         json: arr,
-                        iterator,
                     }),
                     child,
                     focus_position,
@@ -144,11 +140,7 @@ impl CursorFrame {
     fn advance(self) -> (Option<Self>, JV, FocusPosition) {
         use CursorFrame::*;
         match self {
-            Array {
-                index,
-                json,
-                mut iterator,
-            } => match iterator.next() {
+            Array { index, json } => match json.get(index as i32 + 1) {
                 None => (None, json.into(), FocusPosition::End),
                 Some(child) => {
                     let focus_position = FocusPosition::starting(&child);
@@ -156,7 +148,6 @@ impl CursorFrame {
                         Some(Array {
                             index: index + 1,
                             json,
-                            iterator,
                         }),
                         child,
                         focus_position,
@@ -189,27 +180,14 @@ impl CursorFrame {
     fn regress(self) -> (Option<Self>, JV, FocusPosition) {
         use CursorFrame::*;
         match self {
-            Array {
-                index,
-                json,
-                iterator: _,
-            } => match index.checked_sub(1) {
+            Array { index, json } => match index.checked_sub(1) {
                 None => (None, json.into(), FocusPosition::Start),
                 Some(index) => {
-                    let iterator = json.clone().into_iter();
                     let child = json
                         .get(index as i32)
                         .expect("Stepped back and didn't find a child");
                     let focus_position = FocusPosition::starting(&child);
-                    (
-                        Some(Array {
-                            index,
-                            json,
-                            iterator: Box::new(iterator.skip(index)),
-                        }),
-                        child,
-                        focus_position,
-                    )
+                    (Some(Array { index, json }), child, focus_position)
                 }
             },
             Object {
@@ -301,7 +279,7 @@ impl<'a> Cursor<'a> {
             FocusPosition::Start => false,
             _ => match self.frames.last() {
                 None => false,
-                Some(CursorFrame::Array { iterator, .. }) => iterator.len() != 0,
+                Some(CursorFrame::Array { json, index, .. }) => *index != json.len() as usize - 1,
                 Some(CursorFrame::Object { iterator, .. }) => iterator.len() != 0,
             },
         };
