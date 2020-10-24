@@ -312,7 +312,7 @@ impl JsonView {
     fn visible_range(&self, line_limit: usize) -> RangeInclusive<Path> {
         let first = self.scroll.to_path();
         let mut scroll = Cursor::from_path(self.values.clone(), &first);
-        for _ in 0..line_limit {
+        for _ in 0..line_limit.saturating_sub(1) {
             scroll.advance();
         }
         let last = scroll.to_path();

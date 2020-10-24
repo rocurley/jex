@@ -2,7 +2,7 @@ use crate::{
     jq::jv::{JVArray, JVObject, JV},
     lines::{Line, LineContent},
 };
-use std::{collections::HashSet, fmt, rc::Rc};
+use std::{cmp::Ordering, collections::HashSet, fmt, rc::Rc};
 use tui::text::Spans;
 
 // Requirements:
@@ -237,7 +237,7 @@ impl CursorFrame {
                     let child = json
                         .get(index as i32)
                         .expect("Stepped back and didn't find a child");
-                    let focus_position = FocusPosition::starting(&child);
+                    let focus_position = FocusPosition::ending(&child);
                     (Some(Array { index, json }), child, focus_position)
                 }
             },
@@ -253,10 +253,10 @@ impl CursorFrame {
                     let (key, child) = iterator
                         .nth(index)
                         .expect("Stepped back and didn't find a child");
-                    let focus_position = FocusPosition::starting(&child);
+                    let focus_position = FocusPosition::ending(&child);
                     (
                         Some(Object {
-                            index: index + 1,
+                            index,
                             key,
                             json,
                             iterator,
@@ -404,8 +404,8 @@ impl Cursor {
             }
             FocusPosition::Value | FocusPosition::End => match self.frames.pop() {
                 None => {
+                    self.focus = self.jsons.get(self.top_index + 1)?.clone();
                     self.top_index += 1;
-                    self.focus = self.jsons.get(self.top_index)?.clone();
                     self.focus_position = FocusPosition::starting(&self.focus);
                 }
                 Some(frame) => {
@@ -482,11 +482,50 @@ impl Clone for Cursor {
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone)]
+#[derive(PartialEq, Eq, Hash, Debug, Clone)]
 pub struct Path {
     top_index: usize,
     frames: Vec<usize>,
     focus_position: FocusPosition,
+}
+
+impl PartialOrd for Path {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for Path {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.top_index.cmp(&other.top_index) {
+            Ordering::Equal => {}
+            ordering => return ordering,
+        }
+        let mut self_frames = self.frames.iter();
+        let mut other_frames = other.frames.iter();
+        loop {
+            match (self_frames.next(), other_frames.next()) {
+                (Some(self_frame), Some(other_frame)) => match self_frame.cmp(other_frame) {
+                    Ordering::Equal => {}
+                    ordering => return ordering,
+                },
+                (None, Some(_)) => match self.focus_position {
+                    FocusPosition::Start => return Ordering::Less,
+                    FocusPosition::Value => {
+                        panic!("Cannot compare paths that index different jsons")
+                    }
+                    FocusPosition::End => return Ordering::Greater,
+                },
+                (Some(_), None) => match other.focus_position {
+                    FocusPosition::Start => return Ordering::Greater,
+                    FocusPosition::Value => {
+                        panic!("Cannot compare paths that index different jsons")
+                    }
+                    FocusPosition::End => return Ordering::Less,
+                },
+                (None, None) => return self.focus_position.cmp(&other.focus_position),
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -533,7 +572,7 @@ mod tests {
     fn check_path_roundtrip(cursor: &Cursor, jsons: Rc<[JV]>) {
         let path = cursor.to_path();
         let new_cursor = Cursor::from_path(jsons, &path);
-        assert_eq!(cursor, new_cursor);
+        assert_eq!(*cursor, new_cursor);
     }
     proptest! {
         #[test]
@@ -544,6 +583,43 @@ mod tests {
                 check_path_roundtrip(&cursor, jsons.clone());
                 while let Some(()) = cursor.advance() {
                     check_path_roundtrip(&cursor, jsons.clone());
+                }
+            }
+        }
+    }
+    fn check_advance_regress(cursor: &Cursor) {
+        let mut actual: Cursor = cursor.clone();
+        if actual.advance().is_none() {
+            return;
+        }
+        actual.regress().unwrap();
+        assert_eq!(actual, *cursor);
+    }
+    proptest! {
+        #[test]
+        fn prop_advance_regress(values in proptest::collection::vec(arb_json(), 1..10)) {
+            let jsons : Vec<JV> = values.iter().map(|v| v.into()).collect();
+            let jsons : Rc<[JV]> = jsons.into();
+            if let Some(mut cursor) = Cursor::new(jsons.clone()) {
+                check_advance_regress(&cursor);
+                while let Some(()) = cursor.advance() {
+                    check_advance_regress(&cursor);
+                }
+            }
+        }
+    }
+    proptest! {
+        #[test]
+        fn prop_path_ordering(values in proptest::collection::vec(arb_json(), 1..10)) {
+            let jsons : Vec<JV> = values.iter().map(|v| v.into()).collect();
+            let jsons : Rc<[JV]> = jsons.into();
+            if let Some(mut cursor) = Cursor::new(jsons) {
+                let mut prior_path = cursor.to_path();
+                while let Some(()) = cursor.advance() {
+                    let new_path = cursor.to_path();
+                    dbg!(&new_path, &prior_path);
+                    assert!(new_path > prior_path, "Expected {:?} > {:?}", &new_path, &prior_path);
+                    prior_path = new_path;
                 }
             }
         }
