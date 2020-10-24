@@ -485,6 +485,9 @@ impl JVObject {
                 .expect("JV should not have nested invalid value")
         })
     }
+    pub fn len(&self) -> i32 {
+        self.0.object_len()
+    }
 }
 impl From<JVNull> for JV {
     fn from(x: JVNull) -> Self {
