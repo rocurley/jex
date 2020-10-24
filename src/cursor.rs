@@ -342,7 +342,7 @@ impl Cursor {
             focus_position: path.focus_position,
         }
     }
-    pub fn current_line(&self, folds: &HashSet<Path>) -> Line {
+    pub fn current_line(&self, folds: &HashSet<(usize, Vec<usize>)>) -> Line {
         use FocusPosition::*;
         let content = match (&self.focus, self.focus_position) {
             (JV::Object(_), Start) => LineContent::ObjectStart(0),
@@ -363,7 +363,7 @@ impl Cursor {
                 Some(CursorFrame::Object { key, .. }) => Some(key.clone().into()),
             },
         };
-        let folded = folds.contains(&self.to_path());
+        let folded = folds.contains(&self.to_path().strip_position());
         let comma = match self.focus_position {
             FocusPosition::Start => false,
             _ => match self.frames.last() {
@@ -381,7 +381,7 @@ impl Cursor {
             indent,
         }
     }
-    pub fn advance(&mut self) -> Option<()> {
+    pub fn advance(&mut self, folds: &HashSet<(usize, Vec<usize>)>) -> Option<()> {
         // This gets pretty deep into nested match statements, so an english guide to what's going
         // on here.
         // Cases:
@@ -393,8 +393,9 @@ impl Cursor {
         //     * and there are more leaves, so focus on the next leaf.
         //     * and there are no more leaves, so pop the frame, focus on the parent's close bracket
         // * We're focused on a close bracket. Advance the parent as if we were focused on a leaf.
+        let is_folded = folds.contains(&self.to_path().strip_position());
         match self.focus_position {
-            FocusPosition::Start => {
+            FocusPosition::Start if !is_folded => {
                 let (new_frame, new_focus, new_focus_position) = open_container(self.focus.clone());
                 if let Some(new_frame) = new_frame {
                     self.frames.push(new_frame);
@@ -402,7 +403,7 @@ impl Cursor {
                 self.focus = new_focus;
                 self.focus_position = new_focus_position;
             }
-            FocusPosition::Value | FocusPosition::End => match self.frames.pop() {
+            _ => match self.frames.pop() {
                 None => {
                     self.focus = self.jsons.get(self.top_index + 1)?.clone();
                     self.top_index += 1;
@@ -420,7 +421,7 @@ impl Cursor {
         }
         Some(())
     }
-    pub fn regress(&mut self) -> Option<()> {
+    pub fn regress(&mut self, folds: &HashSet<(usize, Vec<usize>)>) -> Option<()> {
         // Pretty mechanical opposite of advance
         match self.focus_position {
             FocusPosition::End => {
@@ -448,12 +449,19 @@ impl Cursor {
                 }
             },
         }
+        let is_folded = folds.contains(&self.to_path().strip_position());
+        if is_folded {
+            self.focus_position = FocusPosition::Start;
+        }
         Some(())
     }
-    pub fn lines_from(mut self, folds: &HashSet<Path>) -> impl Iterator<Item = Line> + '_ {
+    pub fn lines_from(
+        mut self,
+        folds: &HashSet<(usize, Vec<usize>)>,
+    ) -> impl Iterator<Item = Line> + '_ {
         let first_line = self.current_line(folds);
         let rest = std::iter::from_fn(move || {
-            self.advance()?;
+            self.advance(folds)?;
             Some(self.current_line(folds))
         });
         std::iter::once(first_line).chain(rest)
@@ -461,13 +469,13 @@ impl Cursor {
     pub fn render_lines(
         mut self,
         cursor: Option<&Self>,
-        folds: &HashSet<Path>,
+        folds: &HashSet<(usize, Vec<usize>)>,
         line_limit: u16,
     ) -> Vec<Spans<'static>> {
         let mut lines = Vec::with_capacity(line_limit as usize);
         lines.push(self.current_line(folds).render(Some(&self) == cursor));
         for _ in 0..line_limit {
-            if self.advance().is_none() {
+            if self.advance(folds).is_none() {
                 break;
             }
             lines.push(self.current_line(folds).render(Some(&self) == cursor));
@@ -487,6 +495,16 @@ pub struct Path {
     top_index: usize,
     frames: Vec<usize>,
     focus_position: FocusPosition,
+}
+impl Path {
+    pub fn strip_position(self) -> (usize, Vec<usize>) {
+        let Path {
+            top_index,
+            frames,
+            focus_position: _,
+        } = self;
+        (top_index, frames)
+    }
 }
 
 impl PartialOrd for Path {
@@ -530,7 +548,7 @@ impl Ord for Path {
 
 #[cfg(test)]
 mod tests {
-    use super::Cursor;
+    use super::{Cursor, Path};
     use crate::{
         jq::jv::JV,
         lines::{Line, LineContent},
@@ -560,7 +578,7 @@ mod tests {
             let mut actual_lines = Vec::new();
             if let Some(mut cursor) = Cursor::new(jsons.into()) {
                 actual_lines.push(cursor.current_line(&folds));
-                while let Some(()) = cursor.advance() {
+                while let Some(()) = cursor.advance(&folds) {
                     actual_lines.push(cursor.current_line(&folds));
                 }
             }
@@ -579,20 +597,21 @@ mod tests {
         fn prop_path_roundtrip(values in proptest::collection::vec(arb_json(), 1..10)) {
             let jsons : Vec<JV> = values.iter().map(|v| v.into()).collect();
             let jsons : Rc<[JV]> = jsons.into();
+            let folds = HashSet::new();
             if let Some(mut cursor) = Cursor::new(jsons.clone()) {
                 check_path_roundtrip(&cursor, jsons.clone());
-                while let Some(()) = cursor.advance() {
+                while let Some(()) = cursor.advance(&folds) {
                     check_path_roundtrip(&cursor, jsons.clone());
                 }
             }
         }
     }
-    fn check_advance_regress(cursor: &Cursor) {
+    fn check_advance_regress(cursor: &Cursor, folds: &HashSet<(usize, Vec<usize>)>) {
         let mut actual: Cursor = cursor.clone();
-        if actual.advance().is_none() {
+        if actual.advance(folds).is_none() {
             return;
         }
-        actual.regress().unwrap();
+        actual.regress(folds).unwrap();
         assert_eq!(actual, *cursor);
     }
     proptest! {
@@ -600,10 +619,11 @@ mod tests {
         fn prop_advance_regress(values in proptest::collection::vec(arb_json(), 1..10)) {
             let jsons : Vec<JV> = values.iter().map(|v| v.into()).collect();
             let jsons : Rc<[JV]> = jsons.into();
+            let folds = HashSet::new();
             if let Some(mut cursor) = Cursor::new(jsons.clone()) {
-                check_advance_regress(&cursor);
-                while let Some(()) = cursor.advance() {
-                    check_advance_regress(&cursor);
+                check_advance_regress(&cursor, &folds);
+                while let Some(()) = cursor.advance(&folds) {
+                    check_advance_regress(&cursor, &folds);
                 }
             }
         }
@@ -613,9 +633,10 @@ mod tests {
         fn prop_path_ordering(values in proptest::collection::vec(arb_json(), 1..10)) {
             let jsons : Vec<JV> = values.iter().map(|v| v.into()).collect();
             let jsons : Rc<[JV]> = jsons.into();
+            let folds = HashSet::new();
             if let Some(mut cursor) = Cursor::new(jsons) {
                 let mut prior_path = cursor.to_path();
-                while let Some(()) = cursor.advance() {
+                while let Some(()) = cursor.advance(&folds) {
                     let new_path = cursor.to_path();
                     dbg!(&new_path, &prior_path);
                     assert!(new_path > prior_path, "Expected {:?} > {:?}", &new_path, &prior_path);

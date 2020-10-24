@@ -179,24 +179,31 @@ fn run(json_path: String) -> Result<(), io::Error> {
             Some(View::Json(None)) => {}
             Some(View::Json(Some(view))) => match c {
                 Key::Down => {
-                    view.cursor.advance();
+                    view.cursor.advance(&view.folds);
                     if !view
-                        .visible_range(line_limit)
+                        .visible_range(&view.folds, line_limit)
                         .contains(&view.cursor.to_path())
                     {
-                        view.scroll.advance();
+                        view.scroll.advance(&view.folds);
                     }
                 }
                 Key::Up => {
-                    view.cursor.regress();
+                    view.cursor.regress(&view.folds);
                     if !view
-                        .visible_range(line_limit)
+                        .visible_range(&view.folds, line_limit)
                         .contains(&view.cursor.to_path())
                     {
-                        view.scroll.regress();
+                        view.scroll.regress(&view.folds);
                     }
                 }
-                Key::Char('z') => {}
+                Key::Char('z') => {
+                    let path = view.cursor.to_path().strip_position();
+                    if view.folds.contains(&path) {
+                        view.folds.remove(&path);
+                    } else {
+                        view.folds.insert(path);
+                    }
+                }
                 _ => {}
             },
         }
@@ -275,7 +282,7 @@ struct JsonView {
     scroll: Cursor,
     values: Rc<[JV]>,
     cursor: Cursor,
-    folds: HashSet<Path>,
+    folds: HashSet<(usize, Vec<usize>)>,
 }
 
 impl JsonView {
@@ -309,11 +316,15 @@ impl JsonView {
             Err(err) => View::Error(err),
         }
     }
-    fn visible_range(&self, line_limit: usize) -> RangeInclusive<Path> {
+    fn visible_range(
+        &self,
+        folds: &HashSet<(usize, Vec<usize>)>,
+        line_limit: usize,
+    ) -> RangeInclusive<Path> {
         let first = self.scroll.to_path();
         let mut scroll = Cursor::from_path(self.values.clone(), &first);
         for _ in 0..line_limit.saturating_sub(1) {
-            scroll.advance();
+            scroll.advance(folds);
         }
         let last = scroll.to_path();
         first..=last
