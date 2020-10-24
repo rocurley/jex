@@ -45,6 +45,33 @@ pub enum CursorFrame {
     },
 }
 
+impl PartialEq for CursorFrame {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                CursorFrame::Array { index, json },
+                CursorFrame::Array {
+                    index: other_index,
+                    json: other_json,
+                },
+            ) => (index == other_index && json == other_json),
+            (
+                CursorFrame::Object {
+                    index, key, json, ..
+                },
+                CursorFrame::Object {
+                    index: other_index,
+                    key: other_key,
+                    json: other_json,
+                    ..
+                },
+            ) => (index == other_index && json == other_json && key == other_key),
+            _ => false,
+        }
+    }
+}
+impl Eq for CursorFrame {}
+
 fn open_container(json: JV) -> (Option<CursorFrame>, JV, FocusPosition) {
     match json {
         JV::Array(arr) => {
@@ -219,6 +246,7 @@ impl CursorFrame {
     }
 }
 
+#[derive(PartialEq, Eq)]
 pub struct Cursor<'a> {
     // Top level jsons of the view
     jsons: &'a [JV],
@@ -251,6 +279,43 @@ impl<'a> Cursor<'a> {
             top_index: self.top_index,
             frames: self.frames.iter().map(CursorFrame::index).collect(),
             focus_position: self.focus_position,
+        }
+    }
+    pub fn from_path(jsons: &'a [JV], path: &Path) -> Self {
+        let mut focus = jsons[path.top_index].clone();
+        let mut frames = Vec::new();
+        for &index in path.frames.iter() {
+            match focus {
+                JV::Array(arr) => {
+                    let json = arr.clone();
+                    focus = arr
+                        .get(index as i32)
+                        .expect("Shape of path does not match shape of jsons");
+                    frames.push(CursorFrame::Array { index, json });
+                }
+                JV::Object(obj) => {
+                    let json = obj.clone();
+                    let mut iterator = Box::new(obj.clone().into_iter());
+                    let (key, new_focus) = iterator
+                        .nth(index)
+                        .expect("Shape of path does not match shape of jsons");
+                    focus = new_focus;
+                    frames.push(CursorFrame::Object {
+                        index,
+                        json,
+                        key,
+                        iterator,
+                    });
+                }
+                _ => panic!("Shape of path does not match shape of jsons"),
+            }
+        }
+        Cursor {
+            jsons,
+            top_index: path.top_index,
+            frames,
+            focus,
+            focus_position: path.focus_position,
         }
     }
     pub fn current_line(&self, folds: &HashSet<Path>) -> Line {
@@ -409,6 +474,23 @@ mod tests {
             let mut expected_lines = json_to_lines(values.iter());
             strip_container_sizes(&mut expected_lines);
             assert_eq!(actual_lines, expected_lines);
+        }
+    }
+    fn check_path_roundtrip(cursor: &Cursor, jsons: &[JV]) {
+        let path = cursor.to_path();
+        let new_cursor = Cursor::from_path(jsons, &path);
+        assert!(*cursor == new_cursor);
+    }
+    proptest! {
+        #[test]
+        fn prop_path_roundtrip(values in proptest::collection::vec(arb_json(), 1..10)) {
+            let jsons : Vec<JV> = values.iter().map(|v| v.into()).collect();
+            if let Some(mut cursor) = Cursor::new(&jsons) {
+                check_path_roundtrip(&cursor, &jsons);
+                while let Some(()) = cursor.advance() {
+                    check_path_roundtrip(&cursor, &jsons);
+                }
+            }
         }
     }
 }
