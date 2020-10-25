@@ -113,6 +113,8 @@ impl JVRaw {
             ptr: unsafe { jv_null() },
         }
     }
+    // from_serde is attached to JVRaw so we don't have to strip off the outer layer when stuffing
+    // things into arrays.
     pub fn from_serde(v: &Value) -> Self {
         match v {
             Value::Null => JVRaw::null(),
@@ -159,7 +161,7 @@ impl JVRaw {
     pub fn object_len(&self) -> i32 {
         unsafe { jv_object_length(self.clone().unwrap_without_drop()) }
     }
-    pub fn object_iter(&self) -> impl ExactSizeIterator<Item = (String, JVRaw)> + '_ {
+    pub fn object_iter(&self) -> ObjectIterator<'_> {
         let i = unsafe { jv_object_iter(self.ptr) };
         ObjectIterator {
             remaining: self.object_len() as usize,
@@ -167,7 +169,7 @@ impl JVRaw {
             obj: self,
         }
     }
-    pub fn into_object_iter(self) -> impl ExactSizeIterator<Item = (String, JVRaw)> {
+    pub fn into_object_iter(self) -> OwnedObjectIterator {
         let i = unsafe { jv_object_iter(self.ptr) };
         OwnedObjectIterator {
             remaining: self.object_len() as usize,
@@ -175,7 +177,7 @@ impl JVRaw {
             obj: self,
         }
     }
-    pub fn object_values(&self) -> impl ExactSizeIterator<Item = JVRaw> + '_ {
+    pub fn object_values(&self) -> ObjectValuesIterator {
         let i = unsafe { jv_object_iter(self.ptr) };
         ObjectValuesIterator {
             remaining: self.object_len() as usize,
@@ -191,14 +193,6 @@ impl JVRaw {
             ptr: unsafe { jv_array_get(self.clone().unwrap_without_drop(), i) },
         }
     }
-    pub fn array_iter(&self) -> impl ExactSizeIterator<Item = JVRaw> + '_ {
-        let len = self.array_len();
-        (0..len).into_iter().map(move |i| self.array_get(i))
-    }
-    pub fn into_array_iter(self) -> impl ExactSizeIterator<Item = JVRaw> {
-        let len = self.array_len();
-        (0..len).into_iter().map(move |i| self.array_get(i))
-    }
     pub fn invalid_has_msg(&self) -> bool {
         (unsafe { jv_invalid_has_msg(self.clone().unwrap_without_drop()) }) != 0
     }
@@ -210,33 +204,6 @@ impl JVRaw {
             Some(jv_msg.string_value().to_owned())
         } else {
             None
-        }
-    }
-    pub fn to_serde(&self) -> Result<Value, String> {
-        match self.get_kind() {
-            JVKind::Invalid => Err(self
-                .clone()
-                .get_invalid_msg()
-                .unwrap_or_else(|| "No error message".to_owned())),
-            JVKind::Null => Ok(Value::Null),
-            JVKind::False => Ok(Value::Bool(false)),
-            JVKind::True => Ok(Value::Bool(true)),
-            JVKind::Number => Ok(self.number_value().into()),
-            JVKind::String => Ok(self.string_value().into()),
-            JVKind::Array => Ok(self
-                .array_iter()
-                .map(|x| x.to_serde().expect("Array element should not be invalid"))
-                .collect()),
-            JVKind::Object => Ok(Value::Object(
-                self.object_iter()
-                    .map(|(k, v)| {
-                        (
-                            k,
-                            v.to_serde().expect("Object element should not be invalid"),
-                        )
-                    })
-                    .collect(),
-            )),
         }
     }
     pub fn parse_native(s: &str) -> Self {
@@ -268,14 +235,14 @@ impl<'a> FromIterator<(&'a str, JVRaw)> for JVRaw {
     }
 }
 
-struct ObjectIterator<'a> {
+pub struct ObjectIterator<'a> {
     remaining: usize,
     i: i32,
     obj: &'a JVRaw,
 }
 
 impl<'a> Iterator for ObjectIterator<'a> {
-    type Item = (String, JVRaw);
+    type Item = (String, JV);
     fn next(&mut self) -> Option<Self::Item> {
         if unsafe { jv_object_iter_valid(self.obj.ptr, self.i) } == 0 {
             return None;
@@ -291,7 +258,10 @@ impl<'a> Iterator for ObjectIterator<'a> {
         // so we can return a &'a str. That's too spooky for now though.
         self.i = unsafe { jv_object_iter_next(self.obj.ptr, self.i) };
         self.remaining -= 1;
-        Some((k.string_value().into(), v))
+        Some((
+            k.string_value().into(),
+            v.try_into().expect("Object should not contain invalid JV"),
+        ))
     }
     fn size_hint(&self) -> (usize, Option<usize>) {
         (self.remaining, Some(self.remaining))
@@ -300,14 +270,14 @@ impl<'a> Iterator for ObjectIterator<'a> {
 
 impl<'a> ExactSizeIterator for ObjectIterator<'a> {}
 
-struct OwnedObjectIterator {
+pub struct OwnedObjectIterator {
     remaining: usize,
     i: i32,
     obj: JVRaw,
 }
 
 impl Iterator for OwnedObjectIterator {
-    type Item = (String, JVRaw);
+    type Item = (String, JV);
     fn next(&mut self) -> Option<Self::Item> {
         if unsafe { jv_object_iter_valid(self.obj.ptr, self.i) } == 0 {
             return None;
@@ -323,7 +293,10 @@ impl Iterator for OwnedObjectIterator {
         // so we can return a &'a str. That's too spooky for now though.
         self.i = unsafe { jv_object_iter_next(self.obj.ptr, self.i) };
         self.remaining -= 1;
-        Some((k.string_value().into(), v))
+        Some((
+            k.string_value().into(),
+            v.try_into().expect("Object should not contain invalid JV"),
+        ))
     }
     fn size_hint(&self) -> (usize, Option<usize>) {
         (self.remaining, Some(self.remaining))
@@ -332,14 +305,14 @@ impl Iterator for OwnedObjectIterator {
 
 impl<'a> ExactSizeIterator for OwnedObjectIterator {}
 
-struct ObjectValuesIterator<'a> {
+pub struct ObjectValuesIterator<'a> {
     remaining: usize,
     i: i32,
     obj: &'a JVRaw,
 }
 
 impl<'a> Iterator for ObjectValuesIterator<'a> {
-    type Item = JVRaw;
+    type Item = JV;
     fn next(&mut self) -> Option<Self::Item> {
         if unsafe { jv_object_iter_valid(self.obj.ptr, self.i) } == 0 {
             return None;
@@ -347,12 +320,9 @@ impl<'a> Iterator for ObjectValuesIterator<'a> {
         let v = JVRaw {
             ptr: unsafe { jv_object_iter_value(self.obj.ptr, self.i) },
         };
-        // If we wanted to live dangerously, we could say something like this:
-        // Because jv values are COW, k's string value will stay valid as long as obj lives,
-        // so we can return a &'a str. That's too spooky for now though.
         self.i = unsafe { jv_object_iter_next(self.obj.ptr, self.i) };
         self.remaining -= 1;
-        Some(v)
+        Some(v.try_into().expect("Object should not contain invalid JV"))
     }
     fn size_hint(&self) -> (usize, Option<usize>) {
         (self.remaining, Some(self.remaining))
@@ -423,17 +393,8 @@ impl JVArray {
     pub fn set(&mut self, i: i32, v: JV) {
         self.0.array_set(i, v.into())
     }
-    pub fn iter(&self) -> impl ExactSizeIterator<Item = JV> + '_ {
-        self.0.array_iter().map(|v| {
-            v.try_into()
-                .expect("JV should not have nested invalid value")
-        })
-    }
-    pub fn into_iter(self) -> impl ExactSizeIterator<Item = JV> {
-        self.0.into_array_iter().map(|v| {
-            v.try_into()
-                .expect("JV should not have nested invalid value")
-        })
+    pub fn iter(&self) -> BorrowedArrayIterator<'_> {
+        BorrowedArrayIterator { i: 0, arr: self }
     }
     pub fn len(&self) -> i32 {
         self.0.array_len()
@@ -454,6 +415,40 @@ impl JVArray {
         }
     }
 }
+
+pub struct OwnedArrayIterator {
+    i: i32,
+    arr: JVArray,
+}
+impl Iterator for OwnedArrayIterator {
+    type Item = JV;
+    fn next(&mut self) -> Option<Self::Item> {
+        let out = self.arr.get(self.i)?;
+        self.i += 1;
+        Some(out)
+    }
+}
+
+pub struct BorrowedArrayIterator<'a> {
+    i: i32,
+    arr: &'a JVArray,
+}
+impl<'a> Iterator for BorrowedArrayIterator<'a> {
+    type Item = JV;
+    fn next(&mut self) -> Option<Self::Item> {
+        let out = self.arr.get(self.i)?;
+        self.i += 1;
+        Some(out)
+    }
+}
+
+impl std::iter::IntoIterator for JVArray {
+    type Item = JV;
+    type IntoIter = OwnedArrayIterator;
+    fn into_iter(self) -> Self::IntoIter {
+        OwnedArrayIterator { i: 0, arr: self }
+    }
+}
 impl JVObject {
     pub fn new() -> Self {
         JVObject(JVRaw::empty_object())
@@ -461,32 +456,24 @@ impl JVObject {
     pub fn set(&mut self, k: &str, v: JV) {
         self.0.object_set(k, v.into())
     }
-    pub fn iter(&self) -> impl ExactSizeIterator<Item = (String, JV)> + '_ {
-        self.0.object_iter().map(|(k, v)| {
-            (
-                k,
-                v.try_into()
-                    .expect("JV should not have nested invalid value"),
-            )
-        })
+    pub fn iter(&self) -> ObjectIterator {
+        self.0.object_iter()
     }
-    pub fn into_iter(self) -> impl ExactSizeIterator<Item = (String, JV)> {
-        self.0.into_object_iter().map(|(k, v)| {
-            (
-                k,
-                v.try_into()
-                    .expect("JV should not have nested invalid value"),
-            )
-        })
-    }
-    pub fn values(&self) -> impl ExactSizeIterator<Item = JV> + '_ {
-        self.0.object_values().map(|v| {
-            v.try_into()
-                .expect("JV should not have nested invalid value")
-        })
+    pub fn values(&self) -> ObjectValuesIterator {
+        self.0.object_values()
     }
     pub fn len(&self) -> i32 {
         self.0.object_len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+impl std::iter::IntoIterator for JVObject {
+    type Item = (String, JV);
+    type IntoIter = OwnedObjectIterator;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_object_iter()
     }
 }
 impl From<JVNull> for JV {
@@ -536,12 +523,16 @@ impl TryFrom<JVRaw> for JV {
         }
     }
 }
-impl TryFrom<&JV> for Value {
-    type Error = String;
-
-    fn try_from(j: &JV) -> Result<Self, Self::Error> {
-        let raw: &JVRaw = j.into();
-        raw.to_serde()
+impl From<&JV> for Value {
+    fn from(j: &JV) -> Self {
+        match j {
+            JV::Null(_) => Value::Null,
+            JV::Bool(b) => b.value().into(),
+            JV::Number(x) => x.value().into(),
+            JV::String(s) => s.value().into(),
+            JV::Array(arr) => arr.iter().map(|x| Value::from(&x)).collect(),
+            JV::Object(obj) => Value::Object(obj.iter().map(|(k, v)| (k, (&v).into())).collect()),
+        }
     }
 }
 impl From<&Value> for JV {

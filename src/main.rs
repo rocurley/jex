@@ -90,10 +90,9 @@ struct BenchMode {}
 // * Long strings
 // * Edit tree, instead of 2 fixed panels
 // * Saving
+// * Properly handle rustyline abort
 // * Cleanup
-//   * JV is a mess
-//     * Make object iterators a real type so cursors are less awful.
-//   * Lines could be simpler
+//   * Cursor is kind of messy
 #[cfg(feature = "dev-tools")]
 fn main() -> Result<(), io::Error> {
     let args: Args = argh::from_env();

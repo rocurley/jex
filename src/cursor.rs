@@ -355,7 +355,7 @@ impl Cursor {
             (JV::Null(_), Value, _) => LineContent::Null,
             (JV::Bool(b), Value, _) => LineContent::Bool(b.value()),
             (JV::Number(x), Value, _) => LineContent::Number(x.value()),
-            (JV::String(s), Value, _) => LineContent::String(s.value().clone().into()),
+            (JV::String(s), Value, _) => LineContent::String(s.value().into()),
             triple => panic!("Illegal json/focus_position/folded triple: {:?}", triple),
         };
         let key = match self.focus_position {
