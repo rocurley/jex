@@ -41,7 +41,6 @@ fn push_line(
     let line = Line {
         content,
         key,
-        folded: false,
         indent,
         comma,
     };
@@ -54,15 +53,13 @@ fn json_to_lines_inner(
     indent: u8,
     out: &mut Vec<Line>,
     comma: bool,
-) -> usize {
+) {
     match v {
         Value::Null => {
             push_line(key, LineContent::Null, indent, out, comma);
-            1
         }
         Value::Bool(b) => {
             push_line(key, LineContent::Bool(*b), indent, out, comma);
-            1
         }
         Value::Number(x) => {
             push_line(
@@ -72,7 +69,6 @@ fn json_to_lines_inner(
                 out,
                 comma,
             );
-            1
         }
         Value::String(s) => {
             push_line(
@@ -82,31 +78,22 @@ fn json_to_lines_inner(
                 out,
                 comma,
             );
-            1
         }
         Value::Array(xs) => {
-            let mut count = 0;
-            let start_position = out.len();
-            push_line(key, LineContent::ArrayStart(0), indent, out, false);
+            push_line(key, LineContent::ArrayStart, indent, out, false);
             for (i, x) in xs.iter().enumerate() {
                 let comma = i != xs.len() - 1;
-                count += json_to_lines_inner(None, x, indent + 1, out, comma);
+                json_to_lines_inner(None, x, indent + 1, out, comma);
             }
-            push_line(None, LineContent::ArrayEnd(count), indent, out, comma);
-            out[start_position].content = LineContent::ArrayStart(count);
-            count + 2
+            push_line(None, LineContent::ArrayEnd, indent, out, comma);
         }
         Value::Object(xs) => {
-            let mut count = 0;
-            let start_position = out.len();
-            push_line(key, LineContent::ObjectStart(0), indent, out, false);
+            push_line(key, LineContent::ObjectStart, indent, out, false);
             for (i, (k, x)) in xs.iter().enumerate() {
                 let comma = i != xs.len() - 1;
-                count += json_to_lines_inner(Some(k.as_str().into()), x, indent + 1, out, comma);
+                json_to_lines_inner(Some(k.as_str().into()), x, indent + 1, out, comma);
             }
-            push_line(None, LineContent::ObjectEnd(count), indent, out, comma);
-            out[start_position].content = LineContent::ObjectStart(count);
-            count + 2
+            push_line(None, LineContent::ObjectEnd, indent, out, comma);
         }
     }
 }

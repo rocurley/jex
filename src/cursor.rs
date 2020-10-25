@@ -344,16 +344,19 @@ impl Cursor {
     }
     pub fn current_line(&self, folds: &HashSet<(usize, Vec<usize>)>) -> Line {
         use FocusPosition::*;
-        let content = match (&self.focus, self.focus_position) {
-            (JV::Object(_), Start) => LineContent::ObjectStart(0),
-            (JV::Object(_), End) => LineContent::ObjectEnd(0),
-            (JV::Array(_), Start) => LineContent::ArrayStart(0),
-            (JV::Array(_), End) => LineContent::ArrayEnd(0),
-            (JV::Null(_), Value) => LineContent::Null,
-            (JV::Bool(b), Value) => LineContent::Bool(b.value()),
-            (JV::Number(x), Value) => LineContent::Number(x.value()),
-            (JV::String(s), Value) => LineContent::String(s.value().clone().into()),
-            pair => panic!("Illegal json/focus_position pair: {:?}", pair),
+        let folded = folds.contains(&self.to_path().strip_position());
+        let content = match (&self.focus, self.focus_position, folded) {
+            (JV::Object(_), Start, false) => LineContent::ObjectStart,
+            (JV::Object(_), End, false) => LineContent::ObjectEnd,
+            (JV::Object(obj), Start, true) => LineContent::FoldedObject(obj.len() as usize),
+            (JV::Array(_), Start, false) => LineContent::ArrayStart,
+            (JV::Array(_), End, false) => LineContent::ArrayEnd,
+            (JV::Array(arr), Start, true) => LineContent::FoldedArray(arr.len() as usize),
+            (JV::Null(_), Value, _) => LineContent::Null,
+            (JV::Bool(b), Value, _) => LineContent::Bool(b.value()),
+            (JV::Number(x), Value, _) => LineContent::Number(x.value()),
+            (JV::String(s), Value, _) => LineContent::String(s.value().clone().into()),
+            triple => panic!("Illegal json/focus_position/folded triple: {:?}", triple),
         };
         let key = match self.focus_position {
             FocusPosition::End => None,
@@ -363,7 +366,6 @@ impl Cursor {
                 Some(CursorFrame::Object { key, .. }) => Some(key.clone().into()),
             },
         };
-        let folded = folds.contains(&self.to_path().strip_position());
         let comma = match self.focus_position {
             FocusPosition::Start => false,
             _ => match self.frames.last() {
@@ -376,7 +378,6 @@ impl Cursor {
         Line {
             content,
             key,
-            folded,
             comma,
             indent,
         }
@@ -548,27 +549,14 @@ impl Ord for Path {
 
 #[cfg(test)]
 mod tests {
-    use super::{Cursor, Path};
+    use super::Cursor;
     use crate::{
         jq::jv::JV,
-        lines::{Line, LineContent},
         testing::{arb_json, json_to_lines},
     };
     use pretty_assertions::assert_eq;
     use proptest::proptest;
     use std::{collections::HashSet, rc::Rc};
-
-    fn strip_container_sizes(lines: &mut [Line]) {
-        for line in lines {
-            match &mut line.content {
-                LineContent::ArrayStart(x)
-                | LineContent::ArrayEnd(x)
-                | LineContent::ObjectStart(x)
-                | LineContent::ObjectEnd(x) => *x = 0,
-                _ => {}
-            }
-        }
-    }
 
     proptest! {
         #[test]
@@ -582,8 +570,7 @@ mod tests {
                     actual_lines.push(cursor.current_line(&folds));
                 }
             }
-            let mut expected_lines = json_to_lines(values.iter());
-            strip_container_sizes(&mut expected_lines);
+            let expected_lines = json_to_lines(values.iter());
             assert_eq!(actual_lines, expected_lines);
         }
     }
