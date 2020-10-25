@@ -385,7 +385,7 @@ impl App {
                 self.right = Some(left.apply_query(&self.query));
             }
             View::Json(None) => {
-                unimplemented!();
+                self.right = None;
             }
             View::Error(_) => {}
         }
