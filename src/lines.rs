@@ -12,23 +12,6 @@ pub struct Line {
     pub comma: bool,
 }
 
-pub fn next_displayable_line_raw(i: usize, line: &Line) -> usize {
-    let delta = match line {
-        Line {
-            content: LineContent::ArrayStart(lines_skipped),
-            folded: true,
-            ..
-        } => lines_skipped + 2,
-        Line {
-            content: LineContent::ObjectStart(lines_skipped),
-            folded: true,
-            ..
-        } => lines_skipped + 2,
-        _ => 1,
-    };
-    i + delta
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum LineContent {
     Null,
@@ -95,7 +78,7 @@ impl Line {
                 }
             }
             Line {
-                content: LineContent::ArrayStart(skipped_lines),
+                content: LineContent::ArrayStart(children),
                 folded: true,
                 ..
             } => {
@@ -104,7 +87,7 @@ impl Line {
                     out.push(Span::raw(","));
                 }
                 out.push(Span::styled(
-                    format!(" ({} lines)", skipped_lines),
+                    format!(" ({} children)", children),
                     Style::default().add_modifier(Modifier::DIM),
                 ));
             }
@@ -133,7 +116,7 @@ impl Line {
                 }
             }
             Line {
-                content: LineContent::ObjectStart(skipped_lines),
+                content: LineContent::ObjectStart(children),
                 folded: true,
                 ..
             } => {
@@ -142,7 +125,7 @@ impl Line {
                     out.push(Span::raw(","));
                 }
                 out.push(Span::styled(
-                    format!(" ({} lines)", skipped_lines),
+                    format!(" ({} children)", children),
                     Style::default().add_modifier(Modifier::DIM),
                 ));
             }
@@ -265,13 +248,6 @@ pub mod memory {
                     self.object_end += MemoryStat {
                         count: 1,
                         json_size: 1,
-                        indirect_bytes: 0,
-                    }
-                }
-                ValueTerminator => {
-                    self.value_terminator += MemoryStat {
-                        count: 1,
-                        json_size: 1, // Newlines, including trailing newline
                         indirect_bytes: 0,
                     }
                 }

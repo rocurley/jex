@@ -61,35 +61,39 @@ struct BenchMode {}
 //     * Serde -> JV: 3.38 sec
 //     * Computing result: 0???? (it is the trivial filter)
 //     * JV -> Serde: 3.37 sec
-// * New: 10.94 sec
-//   * Initial parsing (JV deserialize): 6.38
-//   * Pre-rendering (shadow tree): 4.50 sec (left and right)
+// * New: 6.32 sec
+//   * Initial parsing (JV deserialize): 6.26
 //   * Query execution: ~0
 //
-// What can we do to improve load times? We create the shadow tree twice, which is wasted: that's
-// arguably an easy win. Note that by that logic we could have eliminated "Query execution"
-// entirely from the old benchmark, as well as half of Pre-rendering, dropping it down to about 5
-// secs. It isn't a total loss, however: we cut memory usage by 2/3 and query execution overhead by
-// about 2/3: we'll make up the time after a single real query, even if the initial trivial query
-// is optimized out.
-//
-// Can we speed up shadow tree construction? Most of the time appears to be spent putzing around
-// inside JV. There seems to be _some_ cost to the JV wrapper around JVRaw, which is unfortunate.
-// We spend a full 1.25 seconds in jv_get_kind, which kind of sucks because we probably do it
-// twice: once in the rust code and once in the c code when validating that the use is proper. We
-// could probably cut out the 2nd half, but we'd need to reach into the private jvp_ API, which
-// doesn't seem like a great plan. Alternatively, we could paralellize the shadow tree
-// construction: right now it's not quite trivial becuase sibling_start_index is global. We could
-// either make it local or construct local ones and then shift them in a final pass (presumably
-// fast, since we don't need drop down into JV).
-//
-// Can we eliminate the shadow tree entirely? Maybe. See comments in shadow_tree.rs.
+// What can we do to improve load times? The current situation looks bleak.
+// * If (big if) JV iterated through maps in insertion order, you could imagine rendinering the
+// scene before the file is fully loaded. We can't load instantly, but we can definitely load one
+// page of json instantly. Probably worth reading the JV object implementation: hopefully it's not
+// too complicated.
+// * We might be able to deserialize in parallel.
+// * Use private JV functions to bypass typechecking when we already know the type.
+// * Only use JVRaws duing deserialization.
+// * Stop using JQ entirely (this would be hellish)
+// * If you can guarantee identiacal rendering from JV and serde Values, deserialize into a serde
+// Value (faster), become interactive then, and secretly swap in the JV once that's ready. Not
+// great from a memory perspective. Any way to do that incrementally? Since we'd have full control
+// over the value-like structure, it might be doable. Shared mutable access across different
+// threads is.... a concenrn.
+// * Completely violate the JV privacy boundary and construct JVs directly. Would we be able to
+// make it faster? I'd be surprised: my guess is that the JV implementation is fairly optimal
+// _given_ the datastructure, which we wouldn't be able to avoid.
+// * Write an interpreter for JQ bytecode. That's definitely considered an implementation detail,
+// so that would be pretty evil, but we might be able to operate directly on serde Values.
 //
 // TODO
 // * Searching
 // * Long strings
 // * Edit tree, instead of 2 fixed panels
 // * Saving
+// * Cleanup
+//   * JV is a mess
+//     * Make object iterators a real type so cursors are less awful.
+//   * Lines could be simpler
 #[cfg(feature = "dev-tools")]
 fn main() -> Result<(), io::Error> {
     let args: Args = argh::from_env();
