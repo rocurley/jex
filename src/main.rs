@@ -21,7 +21,7 @@ use unicode_width::UnicodeWidthStr;
 #[cfg(feature = "dev-tools")]
 use cpuprofiler::PROFILER;
 use jed::{
-    cursor::{Cursor, Path},
+    cursor::{Cursor, FocusPosition, Path},
     jq::{jv::JV, run_jq_query, JQ},
 };
 #[cfg(feature = "dev-tools")]
@@ -206,6 +206,9 @@ fn run(json_path: String) -> Result<(), io::Error> {
                         view.folds.remove(&path);
                     } else {
                         view.folds.insert(path);
+                        if let FocusPosition::End = view.cursor.focus_position {
+                            view.cursor.focus_position = FocusPosition::Start;
+                        }
                     }
                 }
                 Key::Char('/') => {
@@ -215,13 +218,29 @@ fn run(json_path: String) -> Result<(), io::Error> {
                             // Just in case rustyline messed stuff up
                             force_draw(&mut terminal, app.render(AppRenderMode::Normal))?;
                             app.search_re = Regex::new(new_search.as_ref()).ok();
-                            app.search(line_limit);
+                            app.search(line_limit, false);
                         }
                         Err(_) => {}
                     }
                 }
                 Key::Char('n') => {
-                    app.search(line_limit);
+                    app.search(line_limit, false);
+                }
+                Key::Char('N') => {
+                    app.search(line_limit, true);
+                }
+                Key::Home => {
+                    view.cursor =
+                        Cursor::new(view.values.clone()).expect("values should still exist");
+                    view.scroll = view.cursor.clone();
+                }
+                Key::End => {
+                    view.cursor =
+                        Cursor::new_end(view.values.clone()).expect("values should still exist");
+                    view.scroll = view.cursor.clone();
+                    for _ in 0..line_limit - 1 {
+                        view.scroll.regress(&view.folds);
+                    }
                 }
                 _ => {}
             },
@@ -457,7 +476,7 @@ impl App {
             }
         }
     }
-    fn search(&mut self, line_limit: usize) {
+    fn search(&mut self, line_limit: usize, reverse: bool) {
         let re = if let Some(re) = &self.search_re {
             re
         } else {
@@ -478,7 +497,12 @@ impl App {
         } else {
             return;
         };
-        if let Some(search_hit) = view.cursor.clone().search(re) {
+        let search_hit = if reverse {
+            view.cursor.clone().search_back(re)
+        } else {
+            view.cursor.clone().search(re)
+        };
+        if let Some(search_hit) = search_hit {
             view.cursor = search_hit;
         } else {
             return;

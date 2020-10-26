@@ -13,7 +13,7 @@ use tui::text::Spans;
 // * Can be "dehydrated" into something hashable for storing folds (other metadata?)
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone, Copy)]
-enum FocusPosition {
+pub enum FocusPosition {
     Start,
     Value,
     End,
@@ -274,26 +274,38 @@ impl CursorFrame {
 #[derive(PartialEq, Eq, Debug)]
 pub struct Cursor {
     // Top level jsons of the view
-    jsons: Rc<[JV]>,
+    pub jsons: Rc<[JV]>,
     // Index locating the json this cursor is focused (somewhere) on
-    top_index: usize,
+    pub top_index: usize,
     // Stores the ancestors of the current focus, the index of their focused child, and an iterator
     // that will continue right after that child.
-    frames: Vec<CursorFrame>,
+    pub frames: Vec<CursorFrame>,
     // Currently focused json value
-    focus: JV,
+    pub focus: JV,
     // If the json is an array or object, indicates whether the currently focused line is the
     // opening or closing bracket.
-    focus_position: FocusPosition,
+    pub focus_position: FocusPosition,
 }
 
 impl Cursor {
     pub fn new(jsons: Rc<[JV]>) -> Option<Self> {
-        let focus = jsons.get(0)?.clone();
+        let focus = jsons.first()?.clone();
         let focus_position = FocusPosition::starting(&focus);
         Some(Cursor {
             jsons,
             top_index: 0,
+            frames: Vec::new(),
+            focus,
+            focus_position,
+        })
+    }
+    pub fn new_end(jsons: Rc<[JV]>) -> Option<Self> {
+        let top_index = jsons.len() - 1;
+        let focus = jsons.last()?.clone();
+        let focus_position = FocusPosition::ending(&focus);
+        Some(Cursor {
+            jsons,
+            top_index,
             frames: Vec::new(),
             focus,
             focus_position,
@@ -497,26 +509,54 @@ impl Cursor {
     pub fn matches_path(&self, path: &Path) -> bool {
         self.to_path() == *path
     }
+    pub fn regex_matches(&self, re: &Regex) -> bool {
+        if let Some(leaf) = self.leaf_to_string() {
+            if re.is_match(&leaf) {
+                return true;
+            }
+        }
+        if let Some(CursorFrame::Object { key, .. }) = self.frames.last() {
+            if re.is_match(key) {
+                return true;
+            }
+        }
+        false
+    }
     pub fn search(mut self, re: &Regex) -> Option<Self> {
         let mock_folds = HashSet::new();
         let start = self.to_path();
         while let Some(()) = self.advance(&mock_folds) {
-            if let Some(leaf) = self.leaf_to_string() {
-                if re.is_match(&leaf) {
-                    return Some(self);
-                }
+            if self.regex_matches(re) {
+                return Some(self);
             }
         }
         let mut cursor = Cursor::new(self.jsons).expect("Jsons can't be empty here");
         while !cursor.matches_path(&start) {
-            if let Some(leaf) = cursor.leaf_to_string() {
-                if re.is_match(&leaf) {
-                    return Some(cursor);
-                }
+            if cursor.regex_matches(re) {
+                return Some(cursor);
             }
             cursor
                 .advance(&mock_folds)
-                .expect("Shouldn't hit end again before hitting start");
+                .expect("Shouldn't hit end again before hitting initial position");
+        }
+        None
+    }
+    pub fn search_back(mut self, re: &Regex) -> Option<Self> {
+        let mock_folds = HashSet::new();
+        let start = self.to_path();
+        while let Some(()) = self.regress(&mock_folds) {
+            if self.regex_matches(re) {
+                return Some(self);
+            }
+        }
+        let mut cursor = Cursor::new_end(self.jsons).expect("Jsons can't be empty here");
+        while !cursor.matches_path(&start) {
+            if cursor.regex_matches(re) {
+                return Some(cursor);
+            }
+            cursor
+                .regress(&mock_folds)
+                .expect("Shouldn't hit start again before hitting initial position");
         }
         None
     }
