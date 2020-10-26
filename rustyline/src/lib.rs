@@ -450,7 +450,7 @@ fn readline_edit<H: Helper>(
     s.refresh_line()?;
 
     loop {
-        let rc = s.next_cmd(&mut input_state, &mut rdr, false);
+        let rc = s.next_cmd(&mut input_state, &mut rdr, true);
         let mut cmd = rc?;
 
         if cmd.should_reset_kill_ring() {

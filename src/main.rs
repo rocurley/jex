@@ -90,7 +90,6 @@ struct BenchMode {}
 // * Long strings
 // * Edit tree, instead of 2 fixed panels
 // * Saving
-// * Properly handle rustyline abort
 // * Cleanup
 //   * Cursor is kind of messy
 #[cfg(feature = "dev-tools")]
@@ -150,10 +149,10 @@ fn run(json_path: String) -> Result<(), io::Error> {
     terminal.draw(app.render(AppRenderMode::Normal))?;
     let mut query_rl: rustyline::Editor<()> = rustyline::Editor::new();
     let mut search_rl: rustyline::Editor<()> = rustyline::Editor::new();
-    // rl.bind_sequence(rustyline::KeyPress::Tab, rustyline::Cmd::Interrupt);
+    query_rl.bind_sequence(rustyline::KeyPress::Esc, rustyline::Cmd::Interrupt);
+    search_rl.bind_sequence(rustyline::KeyPress::Esc, rustyline::Cmd::Interrupt);
     for c in stdin.keys() {
         let c = c?;
-        //
         match c {
             Key::Esc => break,
             Key::Char('q') => {
