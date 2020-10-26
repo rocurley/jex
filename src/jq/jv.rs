@@ -270,6 +270,7 @@ impl<'a> Iterator for ObjectIterator<'a> {
 
 impl<'a> ExactSizeIterator for ObjectIterator<'a> {}
 
+#[derive(Clone)]
 pub struct OwnedObjectIterator {
     remaining: usize,
     i: i32,
@@ -467,6 +468,13 @@ impl JVObject {
     }
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+    pub fn into_empty_iter(self) -> OwnedObjectIterator {
+        OwnedObjectIterator {
+            remaining: 0,
+            i: -2,
+            obj: self.0,
+        }
     }
 }
 impl std::iter::IntoIterator for JVObject {

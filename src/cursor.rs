@@ -1,5 +1,5 @@
 use crate::{
-    jq::jv::{JVArray, JVObject, JV},
+    jq::jv::{JVArray, JVObject, OwnedObjectIterator, JV},
     lines::{Line, LineContent},
 };
 use regex::Regex;
@@ -34,6 +34,7 @@ impl FocusPosition {
     }
 }
 
+#[derive(Clone)]
 pub enum CursorFrame {
     Array {
         index: usize,
@@ -43,7 +44,7 @@ pub enum CursorFrame {
         index: usize,
         key: String,
         json: JVObject,
-        iterator: Box<dyn ExactSizeIterator<Item = (String, JV)>>,
+        iterator: OwnedObjectIterator,
     },
 }
 
@@ -117,7 +118,7 @@ fn open_container(json: JV) -> (Option<CursorFrame>, JV, FocusPosition) {
             }
         }
         JV::Object(obj) => {
-            let mut iterator = Box::new(obj.clone().into_iter());
+            let mut iterator = obj.clone().into_iter();
             match iterator.next() {
                 None => (None, obj.into(), FocusPosition::End),
                 Some((key, child)) => {
@@ -170,7 +171,7 @@ fn open_container_end(json: JV) -> (Option<CursorFrame>, JV, FocusPosition) {
                             index,
                             json: obj,
                             key,
-                            iterator: Box::new(std::iter::empty()),
+                            iterator: obj.clone().into_empty_iter(),
                         }),
                         child,
                         focus_position,
@@ -250,7 +251,7 @@ impl CursorFrame {
             } => match index.checked_sub(1) {
                 None => (None, json.into(), FocusPosition::Start),
                 Some(index) => {
-                    let mut iterator = Box::new(json.clone().into_iter());
+                    let mut iterator = json.clone().into_iter();
                     let (key, child) = iterator
                         .nth(index)
                         .expect("Stepped back and didn't find a child");
@@ -271,7 +272,7 @@ impl CursorFrame {
     }
 }
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug, Clone)]
 pub struct Cursor {
     // Top level jsons of the view
     pub jsons: Rc<[JV]>,
@@ -332,7 +333,7 @@ impl Cursor {
                 }
                 JV::Object(obj) => {
                     let json = obj.clone();
-                    let mut iterator = Box::new(obj.clone().into_iter());
+                    let mut iterator = obj.clone().into_iter();
                     let (key, new_focus) = iterator
                         .nth(index)
                         .expect("Shape of path does not match shape of jsons");
@@ -559,12 +560,6 @@ impl Cursor {
                 .expect("Shouldn't hit start again before hitting initial position");
         }
         None
-    }
-}
-
-impl Clone for Cursor {
-    fn clone(&self) -> Self {
-        Cursor::from_path(self.jsons.clone(), &self.to_path())
     }
 }
 
