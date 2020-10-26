@@ -25,4 +25,7 @@ Once you've installed jed, you can use it to open a json file by running `jed ex
 - q: Open the query editor. Type a JQ query, and press Enter to execute it against the left pane, and storing the result in the right pane.
 - /: search
 - n: next search result
+- N: prior search result
+- Home: go to the top
+- End: go to the bottom
 - Esc: quit jed (or leave the query editor)
