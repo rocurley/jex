@@ -103,11 +103,11 @@ impl<'a> Drop for JQResults<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{run_jq_query, JVRaw, JQ};
+    use super::{run_jq_query, JQ};
     use crate::{jq::jv::JV, testing::arb_json};
     use proptest::proptest;
     use serde_json::{json, value::Value};
-    use std::cell::RefCell;
+    use std::{cell::RefCell, convert::TryInto};
     fn sample_json() -> JV {
         let val = json!({
             "hello": "world",
@@ -120,9 +120,12 @@ mod tests {
         let jq = JQ::compile(".").unwrap();
         let jq_cell = RefCell::new(jq);
         proptest!(move |(value in arb_json())| {
-            let jv = JVRaw::from_serde(&value);
+            let jv : JV = (&value).into();
             let mut jq = jq_cell.borrow_mut();
-            let results : Vec<Value> = jq.execute(jv).map(|jv| jv.to_serde().unwrap()).collect();
+            let results : Vec<Value> = jq.execute(jv.into()).map(|jv| {
+                let jv : JV = jv.try_into().unwrap();
+                (&jv).into()
+            }).collect();
             assert_eq!(vec![value], results);
         })
     }

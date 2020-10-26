@@ -2,7 +2,8 @@ use crate::{
     jq::jv::{JVArray, JVObject, JV},
     lines::{Line, LineContent},
 };
-use std::{cmp::Ordering, collections::HashSet, fmt, rc::Rc};
+use regex::Regex;
+use std::{borrow::Cow, cmp::Ordering, collections::HashSet, fmt, rc::Rc};
 use tui::text::Spans;
 
 // Requirements:
@@ -482,6 +483,42 @@ impl Cursor {
             lines.push(self.current_line(folds).render(Some(&self) == cursor));
         }
         lines
+    }
+    fn leaf_to_string(&self) -> Option<Cow<str>> {
+        match &self.focus {
+            JV::Null(_) => Some("null".into()),
+            JV::Bool(b) => Some(b.value().to_string().into()),
+            JV::Number(x) => Some(x.value().to_string().into()),
+            JV::String(s) => Some(s.value().into()),
+            _ => None,
+        }
+    }
+    // TODO: do something more efficient
+    pub fn matches_path(&self, path: &Path) -> bool {
+        self.to_path() == *path
+    }
+    pub fn search(mut self, re: &Regex) -> Option<Self> {
+        let mock_folds = HashSet::new();
+        let start = self.to_path();
+        while let Some(()) = self.advance(&mock_folds) {
+            if let Some(leaf) = self.leaf_to_string() {
+                if re.is_match(&leaf) {
+                    return Some(self);
+                }
+            }
+        }
+        let mut cursor = Cursor::new(self.jsons).expect("Jsons can't be empty here");
+        while !cursor.matches_path(&start) {
+            if let Some(leaf) = cursor.leaf_to_string() {
+                if re.is_match(&leaf) {
+                    return Some(cursor);
+                }
+            }
+            cursor
+                .advance(&mock_folds)
+                .expect("Shouldn't hit end again before hitting start");
+        }
+        None
     }
 }
 

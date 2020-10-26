@@ -1,4 +1,5 @@
 use argh::FromArgs;
+use regex::Regex;
 use serde_json::Deserializer;
 use std::{collections::HashSet, fs, io, ops::RangeInclusive, rc::Rc};
 use termion::{
@@ -86,7 +87,6 @@ struct BenchMode {}
 // so that would be pretty evil, but we might be able to operate directly on serde Values.
 //
 // TODO
-// * Searching
 // * Long strings
 // * Edit tree, instead of 2 fixed panels
 // * Saving
@@ -148,7 +148,8 @@ fn run(json_path: String) -> Result<(), io::Error> {
     let backend = TermionBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
     terminal.draw(app.render(AppRenderMode::Normal))?;
-    let mut rl: rustyline::Editor<()> = rustyline::Editor::new();
+    let mut query_rl: rustyline::Editor<()> = rustyline::Editor::new();
+    let mut search_rl: rustyline::Editor<()> = rustyline::Editor::new();
     // rl.bind_sequence(rustyline::KeyPress::Tab, rustyline::Cmd::Interrupt);
     for c in stdin.keys() {
         let c = c?;
@@ -157,7 +158,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
             Key::Esc => break,
             Key::Char('q') => {
                 terminal.draw(app.render(AppRenderMode::QueryEditor))?;
-                match rl.readline_with_initial("", (&app.query, "")) {
+                match query_rl.readline_with_initial("", (&app.query, "")) {
                     Ok(new_query) => {
                         app.query = new_query;
                         // Just in case rustyline messed stuff up
@@ -207,6 +208,21 @@ fn run(json_path: String) -> Result<(), io::Error> {
                         view.folds.insert(path);
                     }
                 }
+                Key::Char('/') => {
+                    terminal.draw(app.render(AppRenderMode::SearchEditor))?;
+                    match search_rl.readline_with_initial("Search:", ("", "")) {
+                        Ok(new_search) => {
+                            // Just in case rustyline messed stuff up
+                            force_draw(&mut terminal, app.render(AppRenderMode::Normal))?;
+                            app.search_re = Regex::new(new_search.as_ref()).ok();
+                            app.search(line_limit);
+                        }
+                        Err(_) => {}
+                    }
+                }
+                Key::Char('n') => {
+                    app.search(line_limit);
+                }
                 _ => {}
             },
         }
@@ -250,6 +266,7 @@ struct App {
     right: Option<View>,
     focus: Focus,
     query: String,
+    search_re: Option<Regex>,
 }
 
 #[derive(Debug)]
@@ -332,6 +349,13 @@ impl JsonView {
         let last = scroll.to_path();
         first..=last
     }
+    fn unfold_around_cursor(&mut self) {
+        let mut path = self.cursor.to_path().strip_position();
+        while !path.1.is_empty() {
+            self.folds.remove(&path);
+            path.1.pop();
+        }
+    }
 }
 
 struct JedLayout {
@@ -362,6 +386,7 @@ impl JedLayout {
 enum AppRenderMode {
     Normal,
     QueryEditor,
+    SearchEditor,
 }
 
 impl App {
@@ -375,6 +400,7 @@ impl App {
             right: None,
             focus: Focus::Left,
             query: String::new(),
+            search_re: None,
         };
         app.recompute_right();
         Ok(app)
@@ -425,10 +451,44 @@ impl App {
                         .wrap(Wrap { trim: false });
                     f.render_widget(query, layout.query);
                 }
-                AppRenderMode::QueryEditor => {
+                AppRenderMode::QueryEditor | AppRenderMode::SearchEditor => {
                     f.set_cursor(0, layout.query.y);
                 }
             }
+        }
+    }
+    fn search(&mut self, line_limit: usize) {
+        let re = if let Some(re) = &self.search_re {
+            re
+        } else {
+            return;
+        };
+        let view = match self.focus {
+            Focus::Left => &mut self.left,
+            Focus::Right => {
+                if let Some(view) = self.right.as_mut() {
+                    view
+                } else {
+                    return;
+                }
+            }
+        };
+        let view = if let View::Json(Some(view)) = view {
+            view
+        } else {
+            return;
+        };
+        if let Some(search_hit) = view.cursor.clone().search(re) {
+            view.cursor = search_hit;
+        } else {
+            return;
+        };
+        view.unfold_around_cursor();
+        if !view
+            .visible_range(&view.folds, line_limit)
+            .contains(&view.cursor.to_path())
+        {
+            view.scroll = view.cursor.clone();
         }
     }
 }
