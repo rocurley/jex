@@ -169,6 +169,25 @@ fn run(json_path: String) -> Result<(), io::Error> {
                 }
             }
             Key::Char('\t') => app.focus = app.focus.swap(),
+            Key::Char('+') => match app.focus {
+                Focus::Left => {
+                    let tree = app
+                        .views
+                        .index_tree_mut(&app.index.parent)
+                        .expect("App index invalidated");
+                    app.index.child = tree.children.len();
+                    tree.push_trivial_child();
+                }
+                Focus::Right => {
+                    app.index.parent.push(app.index.child);
+                    let tree = app
+                        .views
+                        .index_tree_mut(&app.index.parent)
+                        .expect("App index invalidated");
+                    app.index.child = tree.children.len();
+                    tree.push_trivial_child();
+                }
+            },
             _ => {}
         }
         let layout = JedLayout::new(&terminal.get_frame(), app.show_tree);
@@ -416,7 +435,10 @@ impl App {
             f.render_widget(right_paragraph, layout.right);
             if let Some(tree_rect) = layout.tree {
                 let tree_block = Block::default().borders(Borders::ALL);
-                f.render_widget(self.views.render_tree().block(tree_block), tree_rect);
+                f.render_widget(
+                    self.views.render_tree(&self.index).block(tree_block),
+                    tree_rect,
+                );
             }
             match mode {
                 AppRenderMode::Normal => {
