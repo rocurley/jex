@@ -27,33 +27,44 @@ use tui::{
 //     └child
 
 pub struct ViewTree {
-    view: View,
+    view_frame: ViewFrame,
     children: Vec<(String, ViewTree)>,
 }
 
+pub struct ViewFrame {
+    pub view: View,
+    pub name: String,
+}
+
 impl ViewTree {
-    pub fn new_from_reader<R: io::Read>(r: R) -> io::Result<Self> {
+    pub fn new_from_reader<R: io::Read>(r: R, name: String) -> io::Result<Self> {
         let content: Vec<JV> = Deserializer::from_reader(r)
             .into_iter::<JV>()
             .collect::<Result<Vec<JV>, _>>()?;
         let view = View::new(content);
+        let view_frame = ViewFrame { view, name };
         let mut tree = ViewTree {
-            view,
+            view_frame,
             children: Vec::new(),
         };
         tree.push_trivial_child();
         Ok(tree)
     }
     pub fn push_trivial_child(&mut self) {
-        if let View::Json(Some(view)) = &self.view {
-            let child = ViewTree {
+        if let View::Json(Some(view)) = &self.view_frame.view {
+            let name = format!("{}.{}", self.view_frame.name, self.children.len());
+            let view_frame = ViewFrame {
                 view: View::new(view.values.clone()),
+                name,
+            };
+            let child = ViewTree {
+                view_frame,
                 children: Vec::new(),
             };
             self.children.push((".".to_string(), child));
         }
     }
-    pub fn index(&self, ix: &ViewTreeIndex) -> Option<(&View, &View, &String)> {
+    pub fn index(&self, ix: &ViewTreeIndex) -> Option<(&ViewFrame, &ViewFrame, &String)> {
         let mut focus = self;
         let mut path = ix.parent.as_slice();
         while let Some((&i, new_path)) = path.split_first() {
@@ -61,9 +72,12 @@ impl ViewTree {
             path = new_path;
         }
         let (query, child_tree) = focus.children.get(ix.child)?;
-        Some((&focus.view, &child_tree.view, query))
+        Some((&focus.view_frame, &child_tree.view_frame, query))
     }
-    pub fn index_mut(&mut self, ix: &ViewTreeIndex) -> Option<(&mut View, &mut View, &mut String)> {
+    pub fn index_mut(
+        &mut self,
+        ix: &ViewTreeIndex,
+    ) -> Option<(&mut ViewFrame, &mut ViewFrame, &mut String)> {
         let mut focus = self;
         let mut path = ix.parent.as_slice();
         while let Some((&i, new_path)) = path.split_first() {
@@ -71,7 +85,22 @@ impl ViewTree {
             path = new_path;
         }
         let (query, child_tree) = focus.children.get_mut(ix.child)?;
-        Some((&mut focus.view, &mut child_tree.view, query))
+        Some((&mut focus.view_frame, &mut child_tree.view_frame, query))
+    }
+    pub fn render_tree(&self) -> Paragraph {
+        let mut spans = vec![self.view_frame.name.clone().into()];
+        for (i, (_, child)) in self.children.iter().enumerate() {
+            render_tree_inner(child, "".into(), i == self.children.len() - 1, &mut spans);
+        }
+        Paragraph::new(spans).style(Style::default().fg(Color::White).bg(Color::Black))
+    }
+}
+fn render_tree_inner(tree: &ViewTree, prefix: &str, end: bool, out: &mut Vec<Spans>) {
+    let mid = if end { "└" } else { "├" };
+    out.push(format!("{}{}{}", prefix, mid, tree.view_frame.name).into());
+    let new_prefix = format!("{}{}", prefix, if end { ' ' } else { '│' });
+    for (i, (_, child)) in tree.children.iter().enumerate() {
+        render_tree_inner(child, &new_prefix, i == tree.children.len() - 1, out);
     }
 }
 

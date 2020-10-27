@@ -19,7 +19,7 @@ use unicode_width::UnicodeWidthStr;
 use cpuprofiler::PROFILER;
 use jed::{
     cursor::{Cursor, FocusPosition},
-    view_tree::{View, ViewTree, ViewTreeIndex},
+    view_tree::{View, ViewFrame, ViewTree, ViewTreeIndex},
 };
 #[cfg(feature = "dev-tools")]
 use prettytable::{cell, ptable, row, table, Table};
@@ -135,9 +135,9 @@ fn force_draw<B: tui::backend::Backend, F: FnMut(&mut Frame<B>)>(
 
 fn run(json_path: String) -> Result<(), io::Error> {
     let stdin = io::stdin();
-    let f = fs::File::open(json_path)?;
+    let f = fs::File::open(&json_path)?;
     let r = io::BufReader::new(f);
-    let mut app = App::new(r)?;
+    let mut app = App::new(r, json_path)?;
     let stdout = io::stdout().into_raw_mode()?;
     let stdout = MouseTerminal::from(stdout);
     let stdout = AlternateScreen::from(stdout);
@@ -152,6 +152,9 @@ fn run(json_path: String) -> Result<(), io::Error> {
         let c = c?;
         match c {
             Key::Esc => break,
+            Key::Char('t') => {
+                app.show_tree = !app.show_tree;
+            }
             Key::Char('q') => {
                 terminal.draw(app.render(AppRenderMode::QueryEditor))?;
                 let (_, _, query) = app.current_views_mut();
@@ -168,14 +171,14 @@ fn run(json_path: String) -> Result<(), io::Error> {
             Key::Char('\t') => app.focus = app.focus.swap(),
             _ => {}
         }
-        let layout = JedLayout::new(&terminal.get_frame());
+        let layout = JedLayout::new(&terminal.get_frame(), app.show_tree);
         let view_rect = match app.focus {
             Focus::Left => layout.left,
             Focus::Right => layout.right,
         };
         let view = app.focused_view_mut();
         let line_limit = view_rect.height as usize - 2;
-        match view {
+        match &mut view.view {
             View::Error(_) => {}
             View::Json(None) => {}
             View::Json(Some(view)) => match c {
@@ -282,29 +285,49 @@ struct App {
     index: ViewTreeIndex,
     focus: Focus,
     search_re: Option<Regex>,
+    show_tree: bool,
 }
 
 struct JedLayout {
+    tree: Option<Rect>,
     left: Rect,
     right: Rect,
     query: Rect,
 }
 
 impl JedLayout {
-    fn new<B: tui::backend::Backend>(f: &Frame<B>) -> JedLayout {
+    fn new<B: tui::backend::Backend>(f: &Frame<B>, show_tree: bool) -> JedLayout {
         let size = f.size();
         let vchunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(0), Constraint::Length(1)].as_ref())
             .split(size);
-        let chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)].as_ref())
-            .split(vchunks[0]);
-        JedLayout {
-            left: chunks[0],
-            right: chunks[1],
-            query: vchunks[1],
+        if show_tree {
+            let tree_split = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Length(20), Constraint::Ratio(1, 1)].as_ref())
+                .split(vchunks[0]);
+            let views = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)].as_ref())
+                .split(tree_split[1]);
+            JedLayout {
+                tree: Some(tree_split[0]),
+                left: views[0],
+                right: views[1],
+                query: vchunks[1],
+            }
+        } else {
+            let views = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)].as_ref())
+                .split(vchunks[0]);
+            JedLayout {
+                tree: None,
+                left: views[0],
+                right: views[1],
+                query: vchunks[1],
+            }
         }
     }
 }
@@ -316,8 +339,8 @@ enum AppRenderMode {
 }
 
 impl App {
-    fn new<R: io::Read>(r: R) -> io::Result<Self> {
-        let views = ViewTree::new_from_reader(r)?;
+    fn new<R: io::Read>(r: R, name: String) -> io::Result<Self> {
+        let views = ViewTree::new_from_reader(r, name)?;
         let index = ViewTreeIndex {
             parent: Vec::new(),
             child: 0,
@@ -327,27 +350,28 @@ impl App {
             index,
             focus: Focus::Left,
             search_re: None,
+            show_tree: false,
         };
         Ok(app)
     }
-    fn current_views(&self) -> (&View, &View, &String) {
+    fn current_views(&self) -> (&ViewFrame, &ViewFrame, &String) {
         self.views
             .index(&self.index)
             .expect("App index invalidated")
     }
-    fn current_views_mut(&mut self) -> (&mut View, &mut View, &mut String) {
+    fn current_views_mut(&mut self) -> (&mut ViewFrame, &mut ViewFrame, &mut String) {
         self.views
             .index_mut(&self.index)
             .expect("App index invalidated")
     }
-    fn focused_view(&self) -> &View {
+    fn focused_view(&self) -> &ViewFrame {
         let (left, right, _) = self.current_views();
         match self.focus {
             Focus::Left => left,
             Focus::Right => right,
         }
     }
-    fn focused_view_mut(&mut self) -> &mut View {
+    fn focused_view_mut(&mut self) -> &mut ViewFrame {
         let focus = self.focus;
         let (left, right, _) = self.current_views_mut();
         match focus {
@@ -357,12 +381,12 @@ impl App {
     }
     fn recompute_right(&mut self) {
         let (left, right, query) = self.current_views_mut();
-        match left {
+        match &mut left.view {
             View::Json(Some(left)) => {
-                *right = left.apply_query(query);
+                right.view = left.apply_query(query);
             }
             View::Json(None) | View::Error(_) => {
-                *right = View::Json(None);
+                right.view = View::Json(None);
             }
         }
     }
@@ -373,17 +397,27 @@ impl App {
         let App { focus, .. } = self;
         let (left, right, query) = self.current_views();
         move |f| {
-            let layout = JedLayout::new(f);
-            let left_block = Block::default().title("Left").borders(Borders::ALL);
+            let layout = JedLayout::new(f, self.show_tree);
+            let left_block = Block::default()
+                .title(left.name.to_owned())
+                .borders(Borders::ALL);
             let left_paragraph = left
+                .view
                 .render(layout.left.height, *focus == Focus::Left)
                 .block(left_block);
             f.render_widget(left_paragraph, layout.left);
-            let right_block = Block::default().title("Right").borders(Borders::ALL);
+            let right_block = Block::default()
+                .title(right.name.to_owned())
+                .borders(Borders::ALL);
             let right_paragraph = right
+                .view
                 .render(layout.right.height, *focus == Focus::Right)
                 .block(right_block);
             f.render_widget(right_paragraph, layout.right);
+            if let Some(tree_rect) = layout.tree {
+                let tree_block = Block::default().borders(Borders::ALL);
+                f.render_widget(self.views.render_tree().block(tree_block), tree_rect);
+            }
             match mode {
                 AppRenderMode::Normal => {
                     let query = Paragraph::new(query.as_str())
@@ -411,7 +445,7 @@ impl App {
             Focus::Left => left,
             Focus::Right => right,
         };
-        let view = if let View::Json(Some(view)) = view {
+        let view = if let View::Json(Some(view)) = &mut view.view {
             view
         } else {
             return;
