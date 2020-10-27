@@ -85,10 +85,13 @@ struct BenchMode {}
 //
 // TODO
 // * Long strings
-// * Edit tree, instead of 2 fixed panels
+// * Edit tree:
+//   * Children can be modified if they have no children
+//   * Allow copying descendents onto another root, so you if you want to modify a tree's root you
+// can do so by making a new root and then copying over the descendents
+// * Error messages (no search results, can't fold a leaf, can't edit a non-leaf)
 // * Saving
-// * Cleanup
-//   * Cursor is kind of messy
+// * Rename current view
 #[cfg(feature = "dev-tools")]
 fn main() -> Result<(), io::Error> {
     let args: Args = argh::from_env();
@@ -188,6 +191,12 @@ fn run(json_path: String) -> Result<(), io::Error> {
                     tree.push_trivial_child();
                 }
             },
+            Key::Char('j') => {
+                app.index.advance(&app.views);
+            }
+            Key::Char('k') => {
+                app.index.regress();
+            }
             _ => {}
         }
         let layout = JedLayout::new(&terminal.get_frame(), app.show_tree);

@@ -11,26 +11,13 @@ use tui::{
     widgets::Paragraph,
 };
 
-// Edit tree requirements
-// * Show a parent on the left and a child on the right
-// * Children can be modified if they have no children
-// * Allow copying descendents onto another root, so you if you want to modify a tree's root you
-// can do so by making a new root and then copying over the descendents
-// * Views should be named. Root can be the filename, default names can be like parent:0.
-// * Select the child, not the parent, so it's unambiguous.
-// * There should be a tree viewer on the left (toggleable?) that will let you navigate the tree.
-//   * The tree should be presented in a little ascii art tree:
-//
-//     root
-//     ├child
-//     │└grandchild
-//     └child
-
+#[derive(Debug, Clone)]
 pub struct ViewTree {
     pub view_frame: ViewFrame,
     pub children: Vec<(String, ViewTree)>,
 }
 
+#[derive(Debug, Clone)]
 pub struct ViewFrame {
     pub view: View,
     pub name: String,
@@ -154,6 +141,49 @@ impl ViewTreeIndex {
             parent: &self.parent,
             child: self.child,
         }
+    }
+    pub fn advance(&mut self, views: &ViewTree) -> Option<()> {
+        self.advance_inner(views, 0)
+    }
+    fn advance_inner(&mut self, views: &ViewTree, offset: usize) -> Option<()> {
+        match self.parent.get(offset) {
+            // we're at the parent
+            None => {
+                let (_, child) = &views.children[self.child];
+                if !child.children.is_empty() {
+                    self.parent.push(self.child);
+                    self.child = 0;
+                    return Some(());
+                }
+                if self.child == views.children.len() - 1 {
+                    None
+                } else {
+                    self.child += 1;
+                    Some(())
+                }
+            }
+            Some(&child_ix) => {
+                let (_, child) = &views.children[child_ix];
+                if let Some(()) = self.advance_inner(child, offset + 1) {
+                    return Some(());
+                }
+                if child_ix == views.children.len() - 1 {
+                    None
+                } else {
+                    self.child = child_ix + 1;
+                    self.parent.truncate(offset);
+                    Some(())
+                }
+            }
+        }
+    }
+    pub fn regress(&mut self) -> Option<()> {
+        if self.child == 0 {
+            self.child = self.parent.pop()?;
+        } else {
+            self.child -= 1;
+        }
+        Some(())
     }
 }
 

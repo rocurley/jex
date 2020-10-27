@@ -19,13 +19,16 @@ Use
 
 Once you've installed jed, you can use it to open a json file by running `jed example.json`. You can control jed using the following keys:
 
-- Up/down: sroll through the current pane
+- Up/down: scroll through the current pane
 - Tab: switch the active pane
 - z: fold the object or array under the cursor
 - q: Open the query editor. Type a JQ query, and press Enter to execute it against the left pane, and storing the result in the right pane.
 - /: search
 - n: next search result
 - N: prior search result
+- t: toggle visibility of the edit tree
+- j/k: scroll through the edit tree
+- +: add a new child to the selected view
 - Home: go to the top
 - End: go to the bottom
 - Esc: quit jed (or leave the query editor)
