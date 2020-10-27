@@ -1,6 +1,5 @@
 use argh::FromArgs;
 use regex::Regex;
-use serde_json::Deserializer;
 use std::{fs, io};
 use termion::{
     event::Key,
@@ -20,8 +19,7 @@ use unicode_width::UnicodeWidthStr;
 use cpuprofiler::PROFILER;
 use jed::{
     cursor::{Cursor, FocusPosition},
-    jq::jv::JV,
-    view_tree::View,
+    view_tree::{View, ViewTree, ViewTreeIndex},
 };
 #[cfg(feature = "dev-tools")]
 use prettytable::{cell, ptable, row, table, Table};
@@ -156,9 +154,10 @@ fn run(json_path: String) -> Result<(), io::Error> {
             Key::Esc => break,
             Key::Char('q') => {
                 terminal.draw(app.render(AppRenderMode::QueryEditor))?;
-                match query_rl.readline_with_initial("", (&app.query, "")) {
+                let (_, _, query) = app.current_views_mut();
+                match query_rl.readline_with_initial("", (&*query, "")) {
                     Ok(new_query) => {
-                        app.query = new_query;
+                        *query = new_query;
                         // Just in case rustyline messed stuff up
                         force_draw(&mut terminal, app.render(AppRenderMode::Normal))?;
                         app.recompute_right();
@@ -170,16 +169,16 @@ fn run(json_path: String) -> Result<(), io::Error> {
             _ => {}
         }
         let layout = JedLayout::new(&terminal.get_frame());
-        let (view, view_rect) = match app.focus {
-            Focus::Left => (Some(&mut app.left), layout.left),
-            Focus::Right => (app.right.as_mut(), layout.right),
+        let view_rect = match app.focus {
+            Focus::Left => layout.left,
+            Focus::Right => layout.right,
         };
+        let view = app.focused_view_mut();
         let line_limit = view_rect.height as usize - 2;
         match view {
-            None => {}
-            Some(View::Error(_)) => {}
-            Some(View::Json(None)) => {}
-            Some(View::Json(Some(view))) => match c {
+            View::Error(_) => {}
+            View::Json(None) => {}
+            View::Json(Some(view)) => match c {
                 Key::Down => {
                     view.cursor.advance(&view.folds);
                     if !view
@@ -279,10 +278,9 @@ impl Focus {
 }
 
 struct App {
-    left: View,
-    right: Option<View>,
+    views: ViewTree,
+    index: ViewTreeIndex,
     focus: Focus,
-    query: String,
     search_re: Option<Regex>,
 }
 
@@ -319,42 +317,61 @@ enum AppRenderMode {
 
 impl App {
     fn new<R: io::Read>(r: R) -> io::Result<Self> {
-        let content: Vec<JV> = Deserializer::from_reader(r)
-            .into_iter::<JV>()
-            .collect::<Result<Vec<JV>, _>>()?;
-        let left = View::new(content);
-        let mut app = App {
-            left,
-            right: None,
+        let views = ViewTree::new_from_reader(r)?;
+        let index = ViewTreeIndex {
+            parent: Vec::new(),
+            child: 0,
+        };
+        let app = App {
+            views,
+            index,
             focus: Focus::Left,
-            query: String::new(),
             search_re: None,
         };
-        app.recompute_right();
         Ok(app)
     }
+    fn current_views(&self) -> (&View, &View, &String) {
+        self.views
+            .index(&self.index)
+            .expect("App index invalidated")
+    }
+    fn current_views_mut(&mut self) -> (&mut View, &mut View, &mut String) {
+        self.views
+            .index_mut(&self.index)
+            .expect("App index invalidated")
+    }
+    fn focused_view(&self) -> &View {
+        let (left, right, _) = self.current_views();
+        match self.focus {
+            Focus::Left => left,
+            Focus::Right => right,
+        }
+    }
+    fn focused_view_mut(&mut self) -> &mut View {
+        let focus = self.focus;
+        let (left, right, _) = self.current_views_mut();
+        match focus {
+            Focus::Left => left,
+            Focus::Right => right,
+        }
+    }
     fn recompute_right(&mut self) {
-        match &self.left {
+        let (left, right, query) = self.current_views_mut();
+        match left {
             View::Json(Some(left)) => {
-                self.right = Some(left.apply_query(&self.query));
+                *right = left.apply_query(query);
             }
-            View::Json(None) => {
-                self.right = None;
+            View::Json(None) | View::Error(_) => {
+                *right = View::Json(None);
             }
-            View::Error(_) => {}
         }
     }
     fn render<B: tui::backend::Backend>(
-        &mut self,
+        &self,
         mode: AppRenderMode,
     ) -> impl FnMut(&mut Frame<B>) + '_ {
-        let App {
-            left,
-            right,
-            query,
-            focus,
-            ..
-        } = self;
+        let App { focus, .. } = self;
+        let (left, right, query) = self.current_views();
         move |f| {
             let layout = JedLayout::new(f);
             let left_block = Block::default().title("Left").borders(Borders::ALL);
@@ -363,15 +380,10 @@ impl App {
                 .block(left_block);
             f.render_widget(left_paragraph, layout.left);
             let right_block = Block::default().title("Right").borders(Borders::ALL);
-            match right {
-                Some(right) => {
-                    let right_paragraph = right
-                        .render(layout.right.height, *focus == Focus::Right)
-                        .block(right_block);
-                    f.render_widget(right_paragraph, layout.right);
-                }
-                None => f.render_widget(right_block, layout.right),
-            }
+            let right_paragraph = right
+                .render(layout.right.height, *focus == Focus::Right)
+                .block(right_block);
+            f.render_widget(right_paragraph, layout.right);
             match mode {
                 AppRenderMode::Normal => {
                     let query = Paragraph::new(query.as_str())
@@ -391,15 +403,13 @@ impl App {
         } else {
             return;
         };
+        let (left, right, _) = self
+            .views
+            .index_mut(&self.index)
+            .expect("App index invalidated");
         let view = match self.focus {
-            Focus::Left => &mut self.left,
-            Focus::Right => {
-                if let Some(view) = self.right.as_mut() {
-                    view
-                } else {
-                    return;
-                }
-            }
+            Focus::Left => left,
+            Focus::Right => right,
         };
         let view = if let View::Json(Some(view)) = view {
             view

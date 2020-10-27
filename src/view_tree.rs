@@ -2,7 +2,8 @@ use crate::{
     cursor::{Cursor, Path},
     jq::{jv::JV, run_jq_query, JQ},
 };
-use std::{collections::HashSet, ops::RangeInclusive, rc::Rc};
+use serde_json::Deserializer;
+use std::{collections::HashSet, io, ops::RangeInclusive, rc::Rc};
 use tui::{
     layout::Alignment,
     style::{Color, Style},
@@ -10,14 +11,83 @@ use tui::{
     widgets::Paragraph,
 };
 
-#[derive(Debug)]
+// Edit tree requirements
+// * Show a parent on the left and a child on the right
+// * Children can be modified if they have no children
+// * Allow copying descendents onto another root, so you if you want to modify a tree's root you
+// can do so by making a new root and then copying over the descendents
+// * Views should be named. Root can be the filename, default names can be like parent:0.
+// * Select the child, not the parent, so it's unambiguous.
+// * There should be a tree viewer on the left (toggleable?) that will let you navigate the tree.
+//   * The tree should be presented in a little ascii art tree:
+//
+//     root
+//     ├child
+//     │└grandchild
+//     └child
+
+pub struct ViewTree {
+    view: View,
+    children: Vec<(String, ViewTree)>,
+}
+
+impl ViewTree {
+    pub fn new_from_reader<R: io::Read>(r: R) -> io::Result<Self> {
+        let content: Vec<JV> = Deserializer::from_reader(r)
+            .into_iter::<JV>()
+            .collect::<Result<Vec<JV>, _>>()?;
+        let view = View::new(content);
+        let mut tree = ViewTree {
+            view,
+            children: Vec::new(),
+        };
+        tree.push_trivial_child();
+        Ok(tree)
+    }
+    pub fn push_trivial_child(&mut self) {
+        if let View::Json(Some(view)) = &self.view {
+            let child = ViewTree {
+                view: View::new(view.values.clone()),
+                children: Vec::new(),
+            };
+            self.children.push((".".to_string(), child));
+        }
+    }
+    pub fn index(&self, ix: &ViewTreeIndex) -> Option<(&View, &View, &String)> {
+        let mut focus = self;
+        let mut path = ix.parent.as_slice();
+        while let Some((&i, new_path)) = path.split_first() {
+            focus = &focus.children.get(i)?.1;
+            path = new_path;
+        }
+        let (query, child_tree) = focus.children.get(ix.child)?;
+        Some((&focus.view, &child_tree.view, query))
+    }
+    pub fn index_mut(&mut self, ix: &ViewTreeIndex) -> Option<(&mut View, &mut View, &mut String)> {
+        let mut focus = self;
+        let mut path = ix.parent.as_slice();
+        while let Some((&i, new_path)) = path.split_first() {
+            focus = &mut focus.children.get_mut(i)?.1;
+            path = new_path;
+        }
+        let (query, child_tree) = focus.children.get_mut(ix.child)?;
+        Some((&mut focus.view, &mut child_tree.view, query))
+    }
+}
+
+pub struct ViewTreeIndex {
+    pub parent: Vec<usize>,
+    pub child: usize,
+}
+
+#[derive(Debug, Clone)]
 pub enum View {
     Json(Option<JsonView>),
     Error(Vec<String>),
 }
 
 impl View {
-    pub fn new(values: Vec<JV>) -> Self {
+    pub fn new<V: Into<Rc<[JV]>>>(values: V) -> Self {
         View::Json(JsonView::new(values))
     }
     pub fn render(&self, line_limit: u16, has_focus: bool) -> Paragraph {
@@ -38,7 +108,7 @@ impl View {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct JsonView {
     pub scroll: Cursor,
     pub values: Rc<[JV]>,
@@ -47,7 +117,7 @@ pub struct JsonView {
 }
 
 impl JsonView {
-    pub fn new(values: Vec<JV>) -> Option<Self> {
+    pub fn new<V: Into<Rc<[JV]>>>(values: V) -> Option<Self> {
         let values: Rc<[JV]> = values.into();
         let cursor = Cursor::new(values.clone())?;
         let scroll = Cursor::new(values.clone())?;

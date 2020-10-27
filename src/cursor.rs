@@ -169,9 +169,9 @@ fn open_container_end(json: JV) -> (Option<CursorFrame>, JV, FocusPosition) {
                     (
                         Some(CursorFrame::Object {
                             index,
-                            json: obj,
+                            json: obj.clone(),
                             key,
-                            iterator: obj.clone().into_empty_iter(),
+                            iterator: obj.into_empty_iter(),
                         }),
                         child,
                         focus_position,
