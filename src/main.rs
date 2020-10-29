@@ -149,8 +149,10 @@ fn run(json_path: String) -> Result<(), io::Error> {
     terminal.draw(app.render(AppRenderMode::Normal))?;
     let mut query_rl: rustyline::Editor<()> = rustyline::Editor::new();
     let mut search_rl: rustyline::Editor<()> = rustyline::Editor::new();
+    let mut title_rl: rustyline::Editor<()> = rustyline::Editor::new();
     query_rl.bind_sequence(rustyline::KeyPress::Esc, rustyline::Cmd::Interrupt);
     search_rl.bind_sequence(rustyline::KeyPress::Esc, rustyline::Cmd::Interrupt);
+    title_rl.bind_sequence(rustyline::KeyPress::Esc, rustyline::Cmd::Interrupt);
     for c in stdin.keys() {
         let c = c?;
         match c {
@@ -159,7 +161,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
                 app.show_tree = !app.show_tree;
             }
             Key::Char('q') => {
-                terminal.draw(app.render(AppRenderMode::QueryEditor))?;
+                terminal.draw(app.render(AppRenderMode::InputEditor))?;
                 let (_, _, query) = app.current_views_mut();
                 match query_rl.readline_with_initial("", (&*query, "")) {
                     Ok(new_query) => {
@@ -197,6 +199,17 @@ fn run(json_path: String) -> Result<(), io::Error> {
             Key::Char('k') => {
                 app.index.regress();
             }
+            Key::Char('r') => {
+                terminal.draw(app.render(AppRenderMode::InputEditor))?;
+                let view_frame = app.focused_view_mut();
+                match title_rl.readline_with_initial("New Title:", (&view_frame.name, "")) {
+                    Ok(new_name) => {
+                        view_frame.name = new_name;
+                        force_draw(&mut terminal, app.render(AppRenderMode::Normal))?;
+                    }
+                    Err(_) => {}
+                }
+            }
             _ => {}
         }
         let layout = JedLayout::new(&terminal.get_frame(), app.show_tree);
@@ -204,9 +217,9 @@ fn run(json_path: String) -> Result<(), io::Error> {
             Focus::Left => layout.left,
             Focus::Right => layout.right,
         };
-        let view = app.focused_view_mut();
+        let view_frame = app.focused_view_mut();
         let line_limit = view_rect.height as usize - 2;
-        match &mut view.view {
+        match &mut view_frame.view {
             View::Error(_) => {}
             View::Json(None) => {}
             View::Json(Some(view)) => match c {
@@ -240,7 +253,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
                     }
                 }
                 Key::Char('/') => {
-                    terminal.draw(app.render(AppRenderMode::SearchEditor))?;
+                    terminal.draw(app.render(AppRenderMode::InputEditor))?;
                     match search_rl.readline_with_initial("Search:", ("", "")) {
                         Ok(new_search) => {
                             // Just in case rustyline messed stuff up
@@ -362,8 +375,7 @@ impl JedLayout {
 
 enum AppRenderMode {
     Normal,
-    QueryEditor,
-    SearchEditor,
+    InputEditor,
 }
 
 impl App {
@@ -456,7 +468,7 @@ impl App {
                         .wrap(Wrap { trim: false });
                     f.render_widget(query, layout.query);
                 }
-                AppRenderMode::QueryEditor | AppRenderMode::SearchEditor => {
+                AppRenderMode::InputEditor => {
                     f.set_cursor(0, layout.query.y);
                 }
             }

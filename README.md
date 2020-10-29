@@ -29,6 +29,7 @@ Once you've installed jed, you can use it to open a json file by running `jed ex
 - t: toggle visibility of the edit tree
 - j/k: scroll through the edit tree
 - +: add a new child to the selected view
+- r: rename the current view
 - Home: go to the top
 - End: go to the bottom
 - Esc: quit jed (or leave the query editor)
