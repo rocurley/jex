@@ -1,5 +1,5 @@
 use crate::{
-    cursor::{Cursor, Path},
+    cursor::{Cursor, FocusPosition, Path},
     jq::{jv::JV, run_jq_query, JQ},
 };
 use serde_json::Deserializer;
@@ -292,5 +292,69 @@ impl JsonView {
             self.folds.remove(&path);
             path.1.pop();
         }
+    }
+    pub fn toggle_fold(&mut self) {
+        let path = self.cursor.to_path().strip_position();
+        if self.folds.contains(&path) {
+            self.folds.remove(&path);
+        } else {
+            self.folds.insert(path);
+            if let FocusPosition::End = self.cursor.focus_position {
+                self.cursor.focus_position = FocusPosition::Start;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::JsonView;
+    use crate::{cursor::Cursor, jq::jv::JV, testing::arb_json};
+    use pretty_assertions::assert_eq;
+    use proptest::proptest;
+    use serde_json::{Deserializer, Value};
+    use std::{collections::HashSet, fs, io};
+    fn check_folds(values: Vec<Value>) {
+        let jsons: Vec<JV> = values.iter().map(|v| v.into()).collect();
+        let mut view = match JsonView::new(jsons) {
+            None => return,
+            Some(view) => view,
+        };
+        loop {
+            let saved_cursor = view.cursor.clone();
+            view.toggle_fold();
+            view.toggle_fold();
+            // Folding resets you to the top of the fold
+            view.cursor = saved_cursor;
+            assert_eq!(view.folds, HashSet::new());
+            if view.cursor.advance(&view.folds).is_none() {
+                break;
+            }
+        }
+    }
+    proptest! {
+        #[test]
+        fn prop_folds(values in proptest::collection::vec(arb_json(), 1..10)) {
+            check_folds(values);
+        }
+    }
+    #[test]
+    fn unit_folds() {
+        let json_path = "example.json";
+        let f = fs::File::open(&json_path).unwrap();
+        let r = io::BufReader::new(f);
+        let jsons: Vec<JV> = Deserializer::from_reader(r)
+            .into_iter::<JV>()
+            .collect::<Result<Vec<JV>, _>>()
+            .unwrap();
+        let mut view = JsonView::new(jsons).unwrap();
+        view.cursor = Cursor::new_end(view.values.clone()).unwrap();
+        view.scroll = view.cursor.clone();
+        let line_limit = 20;
+        for _ in 0..line_limit - 1 {
+            view.scroll.regress(&view.folds);
+        }
+        view.toggle_fold();
+        view.render(line_limit, true);
     }
 }

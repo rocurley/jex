@@ -242,15 +242,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
                     }
                 }
                 Key::Char('z') => {
-                    let path = view.cursor.to_path().strip_position();
-                    if view.folds.contains(&path) {
-                        view.folds.remove(&path);
-                    } else {
-                        view.folds.insert(path);
-                        if let FocusPosition::End = view.cursor.focus_position {
-                            view.cursor.focus_position = FocusPosition::Start;
-                        }
-                    }
+                    view.toggle_fold();
                 }
                 Key::Char('/') => {
                     terminal.draw(app.render(AppRenderMode::InputEditor))?;

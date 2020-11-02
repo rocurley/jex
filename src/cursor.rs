@@ -628,8 +628,25 @@ mod tests {
     };
     use pretty_assertions::assert_eq;
     use proptest::proptest;
+    use serde_json::{json, Value};
     use std::{collections::HashSet, rc::Rc};
 
+    fn check_advancing_terminates(jsons: Vec<Value>) {
+        let jsons: Vec<JV> = jsons.iter().map(|v| v.into()).collect();
+        let folds = HashSet::new();
+        if let Some(mut cursor) = Cursor::new(jsons.into()) {
+            let mut last_path = cursor.to_path();
+            while let Some(()) = cursor.advance(&folds) {
+                let path = cursor.to_path();
+                assert_ne!(last_path, path);
+                last_path = path;
+            }
+        }
+    }
+    #[test]
+    fn unit_advancing_terminates() {
+        check_advancing_terminates(vec![json![{}]]);
+    }
     proptest! {
         #[test]
         fn prop_lines(values in proptest::collection::vec(arb_json(), 1..10)) {
