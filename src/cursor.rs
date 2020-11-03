@@ -561,6 +561,18 @@ impl Cursor {
         }
         None
     }
+    pub fn descends_from_or_matches(&self, other: &Self) -> bool {
+        if self.top_index != other.top_index {
+            return false;
+        }
+        if self.frames.len() < other.frames.len() {
+            return false;
+        }
+        self.frames
+            .iter()
+            .zip(other.frames.iter())
+            .all(|(self_frame, other_frame)| self_frame == other_frame)
+    }
 }
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone)]

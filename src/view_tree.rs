@@ -302,6 +302,9 @@ impl JsonView {
             if let FocusPosition::End = self.cursor.focus_position {
                 self.cursor.focus_position = FocusPosition::Start;
             }
+            if self.scroll.descends_from_or_matches(&self.cursor) {
+                self.scroll = self.cursor.clone();
+            }
         }
     }
 }
