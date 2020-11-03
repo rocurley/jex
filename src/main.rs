@@ -6,7 +6,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use regex::Regex;
-use std::{fs, io, io::Write};
+use std::{fs, io, io::Write, panic};
 use tui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -141,6 +141,12 @@ fn run(json_path: String) -> Result<(), io::Error> {
 
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen).expect("Failed to enter alternate screen");
+    let default_panic_handler = panic::take_hook();
+    panic::set_hook(Box::new(move |p| {
+        disable_raw_mode().expect("Failed to disable raw mode");
+        execute!(io::stdout(), LeaveAlternateScreen).expect("Failed to leave alternate screen");
+        default_panic_handler(p);
+    }));
     let f = fs::File::open(&json_path)?;
     let r = io::BufReader::new(f);
     let mut app = App::new(r, json_path)?;
