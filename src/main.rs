@@ -1,14 +1,14 @@
 use argh::FromArgs;
-use regex::Regex;
-use std::{fs, io};
-use termion::{
-    event::Key,
-    input::{MouseTerminal, TermRead},
-    raw::IntoRawMode,
-    screen::AlternateScreen,
+use crossterm::{
+    event,
+    event::KeyCode,
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use regex::Regex;
+use std::{fs, io, io::Write};
 use tui::{
-    backend::TermionBackend,
+    backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame, Terminal,
@@ -137,14 +137,15 @@ fn force_draw<B: tui::backend::Backend, F: FnMut(&mut Frame<B>)>(
 }
 
 fn run(json_path: String) -> Result<(), io::Error> {
-    let stdin = io::stdin();
+    enable_raw_mode().expect("Failed to enter raw mode");
+
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen).expect("Failed to enter alternate screen");
     let f = fs::File::open(&json_path)?;
     let r = io::BufReader::new(f);
     let mut app = App::new(r, json_path)?;
-    let stdout = io::stdout().into_raw_mode()?;
-    let stdout = MouseTerminal::from(stdout);
-    let stdout = AlternateScreen::from(stdout);
-    let backend = TermionBackend::new(stdout);
+    let stdout = io::stdout();
+    let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
     terminal.draw(app.render(AppRenderMode::Normal))?;
     let mut query_rl: rustyline::Editor<()> = rustyline::Editor::new();
@@ -153,14 +154,21 @@ fn run(json_path: String) -> Result<(), io::Error> {
     query_rl.bind_sequence(rustyline::KeyPress::Esc, rustyline::Cmd::Interrupt);
     search_rl.bind_sequence(rustyline::KeyPress::Esc, rustyline::Cmd::Interrupt);
     title_rl.bind_sequence(rustyline::KeyPress::Esc, rustyline::Cmd::Interrupt);
-    for c in stdin.keys() {
-        let c = c?;
-        match c {
-            Key::Esc => break,
-            Key::Char('t') => {
+    loop {
+        let event = event::read().expect("Error getting next event");
+        let c = match event {
+            event::Event::Key(c) => c,
+            event::Event::Mouse(_) => panic!("Mouse events aren't enabled!"),
+            event::Event::Resize(_, _) => {
+                continue;
+            }
+        };
+        match c.code {
+            KeyCode::Esc => break,
+            KeyCode::Char('t') => {
                 app.show_tree = !app.show_tree;
             }
-            Key::Char('q') => {
+            KeyCode::Char('q') => {
                 terminal.draw(app.render(AppRenderMode::InputEditor))?;
                 let (_, _, query) = app.current_views_mut();
                 match query_rl.readline_with_initial("", (&*query, "")) {
@@ -173,8 +181,8 @@ fn run(json_path: String) -> Result<(), io::Error> {
                     Err(_) => {}
                 }
             }
-            Key::Char('\t') => app.focus = app.focus.swap(),
-            Key::Char('+') => match app.focus {
+            KeyCode::Char('\t') => app.focus = app.focus.swap(),
+            KeyCode::Char('+') => match app.focus {
                 Focus::Left => {
                     let tree = app
                         .views
@@ -193,13 +201,13 @@ fn run(json_path: String) -> Result<(), io::Error> {
                     tree.push_trivial_child();
                 }
             },
-            Key::Char('j') => {
+            KeyCode::Char('j') => {
                 app.index.advance(&app.views);
             }
-            Key::Char('k') => {
+            KeyCode::Char('k') => {
                 app.index.regress();
             }
-            Key::Char('r') => {
+            KeyCode::Char('r') => {
                 terminal.draw(app.render(AppRenderMode::InputEditor))?;
                 let view_frame = app.focused_view_mut();
                 match title_rl.readline_with_initial("New Title:", (&view_frame.name, "")) {
@@ -222,8 +230,8 @@ fn run(json_path: String) -> Result<(), io::Error> {
         match &mut view_frame.view {
             View::Error(_) => {}
             View::Json(None) => {}
-            View::Json(Some(view)) => match c {
-                Key::Down => {
+            View::Json(Some(view)) => match c.code {
+                KeyCode::Down => {
                     view.cursor.advance(&view.folds);
                     if !view
                         .visible_range(&view.folds, line_limit)
@@ -232,7 +240,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
                         view.scroll.advance(&view.folds);
                     }
                 }
-                Key::Up => {
+                KeyCode::Up => {
                     view.cursor.regress(&view.folds);
                     if !view
                         .visible_range(&view.folds, line_limit)
@@ -241,10 +249,10 @@ fn run(json_path: String) -> Result<(), io::Error> {
                         view.scroll.regress(&view.folds);
                     }
                 }
-                Key::Char('z') => {
+                KeyCode::Char('z') => {
                     view.toggle_fold();
                 }
-                Key::Char('/') => {
+                KeyCode::Char('/') => {
                     terminal.draw(app.render(AppRenderMode::InputEditor))?;
                     match search_rl.readline_with_initial("Search:", ("", "")) {
                         Ok(new_search) => {
@@ -256,18 +264,18 @@ fn run(json_path: String) -> Result<(), io::Error> {
                         Err(_) => {}
                     }
                 }
-                Key::Char('n') => {
+                KeyCode::Char('n') => {
                     app.search(line_limit, false);
                 }
-                Key::Char('N') => {
+                KeyCode::Char('N') => {
                     app.search(line_limit, true);
                 }
-                Key::Home => {
+                KeyCode::Home => {
                     view.cursor =
                         Cursor::new(view.values.clone()).expect("values should still exist");
                     view.scroll = view.cursor.clone();
                 }
-                Key::End => {
+                KeyCode::End => {
                     view.cursor =
                         Cursor::new_end(view.values.clone()).expect("values should still exist");
                     view.scroll = view.cursor.clone();
@@ -280,6 +288,8 @@ fn run(json_path: String) -> Result<(), io::Error> {
         }
         terminal.draw(app.render(AppRenderMode::Normal))?;
     }
+    disable_raw_mode().expect("Failed to disable raw mode");
+    execute!(io::stdout(), LeaveAlternateScreen).expect("Failed to leave alternate screen");
     // Gracefully freeing the JV values can take a significant amount of time and doesn't actually
     // benefit anything: the OS will clean up after us when we exit.
     std::mem::forget(app);
