@@ -1,6 +1,9 @@
 use crate::{
     cursor::{Cursor, FocusPosition, Path},
-    jq::{jv::JV, run_jq_query, JQ},
+    jq::{
+        jv::JV,
+        query::{run_jq_query, JQ},
+    },
 };
 use serde_json::Deserializer;
 use std::{collections::HashSet, io, ops::RangeInclusive, rc::Rc};

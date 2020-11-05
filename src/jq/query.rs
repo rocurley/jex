@@ -1,7 +1,8 @@
-pub mod jv;
-
+use super::{
+    jv::JV,
+    jv_raw::{JVKind, JVRaw},
+};
 use jq_sys::{jq_compile, jq_init, jq_next, jq_set_error_cb, jq_start, jq_state, jq_teardown};
-use jv::{JVKind, JVRaw, JV};
 use std::{convert::TryInto, ffi::CString, os::raw::c_void};
 
 pub fn run_jq_query<'a, I: IntoIterator<Item = &'a JV>>(
