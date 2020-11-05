@@ -16,11 +16,28 @@ use std::{
     convert::{TryFrom, TryInto},
     fmt,
     iter::FromIterator,
+    marker::PhantomData,
     mem::forget,
+    ops::Deref,
     os::raw::c_char,
     slice, str,
 };
 
+// One current limitation we have is that we can't really borrow from a JVRaw. Given an &JVRaw, we
+// can't index into it and get an &JVRaw: we can only get a JVRaw. Why is this a problem? Owned
+// values can be annoying from a lifetime perspective. We expect to use some long-lived JVs: the
+// fact that they'll live a long time is valuable. For example, say we have an array of strings in
+// JV form. We want to get an iterator of &str s. An iterator can't return a reference to values it
+// owns (because there's no way to impose that constraint on `next`).
+//
+// A question is: do jv containers own their children? One possible alternative would be for them
+// to store their children in some different representation, and convert from that when you index
+// into them. However, it seems pretty clear from jv_array_get and jv_object_get that that's not
+// what's happening: they're passing internal pointers to jv_copy.
+//
+// This means we can create a non-owning JV.
+
+#[repr(transparent)]
 pub(super) struct JVRaw {
     pub ptr: jv,
 }
@@ -28,18 +45,6 @@ impl fmt::Debug for JVRaw {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "JV{{..}}")
     }
-}
-
-#[derive(Clone, Copy, Eq, Debug, PartialEq)]
-pub enum JVKind {
-    Invalid = jv_kind_JV_KIND_INVALID as isize,
-    Null = jv_kind_JV_KIND_NULL as isize,
-    False = jv_kind_JV_KIND_FALSE as isize,
-    True = jv_kind_JV_KIND_TRUE as isize,
-    Number = jv_kind_JV_KIND_NUMBER as isize,
-    String = jv_kind_JV_KIND_STRING as isize,
-    Array = jv_kind_JV_KIND_ARRAY as isize,
-    Object = jv_kind_JV_KIND_OBJECT as isize,
 }
 
 impl Drop for JVRaw {
@@ -66,11 +71,62 @@ impl PartialEq for JVRaw {
 }
 impl Eq for JVRaw {}
 
+#[derive(Clone, Copy, Eq, Debug, PartialEq)]
+pub enum JVKind {
+    Invalid = jv_kind_JV_KIND_INVALID as isize,
+    Null = jv_kind_JV_KIND_NULL as isize,
+    False = jv_kind_JV_KIND_FALSE as isize,
+    True = jv_kind_JV_KIND_TRUE as isize,
+    Number = jv_kind_JV_KIND_NUMBER as isize,
+    String = jv_kind_JV_KIND_STRING as isize,
+    Array = jv_kind_JV_KIND_ARRAY as isize,
+    Object = jv_kind_JV_KIND_OBJECT as isize,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct JVRawBorrowed<'a> {
+    ptr: jv,
+    phantom: PhantomData<&'a JVRaw>,
+}
+
+impl<'a> Deref for JVRawBorrowed<'a> {
+    type Target = JVRaw;
+    fn deref(&self) -> &Self::Target {
+        self.deref()
+    }
+}
+
+impl<'a> JVRawBorrowed<'a> {
+    // This is more powerful than the Deref trait, which caps the lifetime at the lifetime at that
+    // of the reference (the reference to the JVRawBorrowed, that is to say, not the lifetime
+    // parameter).
+    fn deref<'b>(&'b self) -> &'a JVRaw {
+        // Pointer casts are super scary, but this is basically the safest possible case: it's
+        // casting between a jv and a JVRaw, and JVRaw is a repr(transparent) wrapper around jv.
+        unsafe { &*(&self.ptr as *const jv as *const JVRaw) }
+    }
+}
+
 impl JVRaw {
     pub fn unwrap_without_drop(self) -> jv {
         let JVRaw { ptr } = self;
         forget(self);
         ptr
+    }
+    pub fn borrow<'a>(&'a self) -> JVRawBorrowed<'a> {
+        JVRawBorrowed {
+            ptr: self.ptr,
+            phantom: PhantomData,
+        }
+    }
+    // Safety: This must only be called on a JV owned by another JV (an array or object), and the
+    // result must be cast to have the lifetime of the owner.
+    unsafe fn owned_to_borrowed(self) -> JVRawBorrowed<'static> {
+        jv_free(self.ptr);
+        JVRawBorrowed {
+            ptr: self.ptr,
+            phantom: PhantomData,
+        }
     }
     pub fn empty_array() -> Self {
         JVRaw {
@@ -188,9 +244,13 @@ impl JVRaw {
     pub fn array_len(&self) -> i32 {
         unsafe { jv_array_length(self.clone().unwrap_without_drop()) }
     }
-    pub fn array_get(&self, i: i32) -> JVRaw {
-        JVRaw {
-            ptr: unsafe { jv_array_get(self.clone().unwrap_without_drop(), i) },
+    pub fn array_get<'a>(&'a self, i: i32) -> JVRawBorrowed<'a> {
+        let ptr = unsafe { jv_array_get(self.clone().unwrap_without_drop(), i) };
+        // We're relying on the fact that the owning array holds a refcount here.
+        unsafe { jv_free(ptr) };
+        JVRawBorrowed {
+            ptr,
+            phantom: PhantomData {},
         }
     }
     pub fn invalid_has_msg(&self) -> bool {
@@ -242,13 +302,16 @@ pub struct ObjectIterator<'a> {
 }
 
 impl<'a> Iterator for ObjectIterator<'a> {
-    type Item = (String, JV);
+    type Item = (&'a str, JV);
     fn next(&mut self) -> Option<Self::Item> {
         if unsafe { jv_object_iter_valid(self.obj.ptr, self.i) } == 0 {
             return None;
         }
-        let k = JVRaw {
-            ptr: unsafe { jv_object_iter_key(self.obj.ptr, self.i) },
+        let k: JVRawBorrowed<'a> = unsafe {
+            JVRaw {
+                ptr: jv_object_iter_key(self.obj.ptr, self.i),
+            }
+            .owned_to_borrowed()
         };
         let v = JVRaw {
             ptr: unsafe { jv_object_iter_value(self.obj.ptr, self.i) },
@@ -259,7 +322,7 @@ impl<'a> Iterator for ObjectIterator<'a> {
         self.i = unsafe { jv_object_iter_next(self.obj.ptr, self.i) };
         self.remaining -= 1;
         Some((
-            k.string_value().into(),
+            k.deref().string_value(),
             v.try_into().expect("Object should not contain invalid JV"),
         ))
     }
@@ -367,7 +430,7 @@ impl JVBool {
         match self.0.get_kind() {
             JVKind::True => true,
             JVKind::False => false,
-            _ => panic!("Invalid kind fo JVBool"),
+            _ => panic!("Invalid kind for JVBool"),
         }
     }
 }
@@ -405,10 +468,9 @@ impl JVArray {
     }
     pub fn get(&self, i: i32) -> Option<JV> {
         if (0..self.len()).contains(&i) {
+            let raw = JVRaw::clone(&*self.0.array_get(i));
             Some(
-                self.0
-                    .array_get(i)
-                    .try_into()
+                raw.try_into()
                     .expect("JV should not have nested invalid value"),
             )
         } else {
@@ -539,7 +601,11 @@ impl From<&JV> for Value {
             JV::Number(x) => x.value().into(),
             JV::String(s) => s.value().into(),
             JV::Array(arr) => arr.iter().map(|x| Value::from(&x)).collect(),
-            JV::Object(obj) => Value::Object(obj.iter().map(|(k, v)| (k, (&v).into())).collect()),
+            JV::Object(obj) => Value::Object(
+                obj.iter()
+                    .map(|(k, v)| (k.to_owned(), (&v).into()))
+                    .collect(),
+            ),
         }
     }
 }
