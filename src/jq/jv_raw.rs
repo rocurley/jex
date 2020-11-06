@@ -1,7 +1,7 @@
 use super::jv::JV;
 use jq_sys::{
     jv, jv_array, jv_array_get, jv_array_length, jv_array_set, jv_bool, jv_copy, jv_equal, jv_free,
-    jv_get_kind, jv_invalid_get_msg, jv_invalid_has_msg, jv_kind_JV_KIND_ARRAY,
+    jv_get_kind, jv_get_refcnt, jv_invalid_get_msg, jv_invalid_has_msg, jv_kind_JV_KIND_ARRAY,
     jv_kind_JV_KIND_FALSE, jv_kind_JV_KIND_INVALID, jv_kind_JV_KIND_NULL, jv_kind_JV_KIND_NUMBER,
     jv_kind_JV_KIND_OBJECT, jv_kind_JV_KIND_STRING, jv_kind_JV_KIND_TRUE, jv_null, jv_number,
     jv_number_value, jv_object, jv_object_iter, jv_object_iter_key, jv_object_iter_next,
@@ -83,7 +83,7 @@ pub(super) struct JVRawBorrowed<'a> {
 impl<'a> Deref for JVRawBorrowed<'a> {
     type Target = JVRaw;
     fn deref(&self) -> &Self::Target {
-        self.deref()
+        unsafe { self.deref() }
     }
 }
 
@@ -91,10 +91,17 @@ impl<'a> JVRawBorrowed<'a> {
     // This is more powerful than the Deref trait, which caps the lifetime at the lifetime at that
     // of the reference (the reference to the JVRawBorrowed, that is to say, not the lifetime
     // parameter).
-    fn deref<'b>(&'b self) -> &'a JVRaw {
+    // Safety: although this reference has a lifetime of 'a, that's not actually right. Anything
+    // you borrow from the returned reference will be good for 'a, but the returned reference
+    // itself is only good for 'b. The caller is responsible for ensuring that the returned value
+    // does not outlive the reciever.
+    unsafe fn deref<'b>(&'b self) -> &'a JVRaw {
         // Pointer casts are super scary, but this is basically the safest possible case: it's
         // casting between a jv and a JVRaw, and JVRaw is a repr(transparent) wrapper around jv.
-        unsafe { &*(&self.ptr as *const jv as *const JVRaw) }
+        &*(&self.ptr as *const jv as *const JVRaw)
+    }
+    fn string_value(self) -> &'a str {
+        unsafe { self.deref() }.string_value()
     }
 }
 
@@ -113,7 +120,12 @@ impl JVRaw {
     // Safety: This must only be called on a JV owned by another JV (an array or object), and the
     // result must be cast to have the lifetime of the owner.
     unsafe fn owned_to_borrowed(self) -> JVRawBorrowed<'static> {
-        jv_free(self.ptr);
+        let refcount = jv_get_refcnt(self.ptr);
+        // Note that this assert is nessecary but not sufficient for safety: the lifetime still
+        // needs to be correctly cast.
+        assert!(refcount > 1, "Refcount {} must be > 1", refcount);
+        // Note that self will call jv_free at the end of this scope, so there's no need to free it
+        // explicitly.
         JVRawBorrowed {
             ptr: self.ptr,
             phantom: PhantomData,
@@ -213,7 +225,7 @@ impl JVRaw {
         ObjectIterator {
             remaining: self.object_len() as usize,
             i,
-            obj: self,
+            obj: self.borrow(),
         }
     }
     pub fn into_object_iter(self) -> OwnedObjectIterator {
@@ -296,7 +308,7 @@ impl<'a> FromIterator<(&'a str, JVRaw)> for JVRaw {
 pub struct ObjectIterator<'a> {
     remaining: usize,
     i: i32,
-    obj: &'a JVRaw,
+    obj: JVRawBorrowed<'a>,
 }
 
 impl<'a> Iterator for ObjectIterator<'a> {
@@ -305,6 +317,7 @@ impl<'a> Iterator for ObjectIterator<'a> {
         if unsafe { jv_object_iter_valid(self.obj.ptr, self.i) } == 0 {
             return None;
         }
+        // Safety: this is guaranteed not to outlive self.obj, which owns a reference to the key.
         let k: JVRawBorrowed<'a> = unsafe {
             JVRaw {
                 ptr: jv_object_iter_key(self.obj.ptr, self.i),
@@ -314,13 +327,10 @@ impl<'a> Iterator for ObjectIterator<'a> {
         let v = JVRaw {
             ptr: unsafe { jv_object_iter_value(self.obj.ptr, self.i) },
         };
-        // If we wanted to live dangerously, we could say something like this:
-        // Because jv values are COW, k's string value will stay valid as long as obj lives,
-        // so we can return a &'a str. That's too spooky for now though.
         self.i = unsafe { jv_object_iter_next(self.obj.ptr, self.i) };
         self.remaining -= 1;
         Some((
-            k.deref().string_value(),
+            k.string_value(),
             v.try_into().expect("Object should not contain invalid JV"),
         ))
     }
