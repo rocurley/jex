@@ -255,12 +255,11 @@ impl JVRaw {
         unsafe { jv_array_length(self.clone().unwrap_without_drop()) }
     }
     pub fn array_get<'a>(&'a self, i: i32) -> JVRawBorrowed<'a> {
-        let ptr = unsafe { jv_array_get(self.clone().unwrap_without_drop(), i) };
-        // We're relying on the fact that the owning array holds a refcount here.
-        unsafe { jv_free(ptr) };
-        JVRawBorrowed {
-            ptr,
-            phantom: PhantomData {},
+        unsafe {
+            JVRaw {
+                ptr: jv_array_get(self.clone().unwrap_without_drop(), i),
+            }
+            .owned_to_borrowed()
         }
     }
     pub fn invalid_has_msg(&self) -> bool {
