@@ -1,5 +1,8 @@
-use super::jv_raw::{JVKind, JVRaw};
 pub use super::jv_raw::{ObjectIterator, ObjectValuesIterator, OwnedObjectIterator};
+use super::{
+    jv_borrowed::JVBorrowed,
+    jv_raw::{JVKind, JVRaw},
+};
 use serde::{
     de::{MapAccess, SeqAccess, Visitor},
     Deserialize,
@@ -10,18 +13,24 @@ use std::{
     fmt,
 };
 
+#[repr(transparent)]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct JVNull(JVRaw);
+pub struct JVNull(pub(super) JVRaw);
+#[repr(transparent)]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct JVBool(JVRaw);
+pub struct JVBool(pub(super) JVRaw);
+#[repr(transparent)]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct JVNumber(JVRaw);
+pub struct JVNumber(pub(super) JVRaw);
+#[repr(transparent)]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct JVString(JVRaw);
+pub struct JVString(pub(super) JVRaw);
+#[repr(transparent)]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct JVArray(JVRaw);
+pub struct JVArray(pub(super) JVRaw);
+#[repr(transparent)]
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct JVObject(JVRaw);
+pub struct JVObject(pub(super) JVRaw);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JV {
@@ -81,9 +90,9 @@ impl JVArray {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
-    pub fn get(&self, i: i32) -> Option<JV> {
+    pub fn get(&self, i: i32) -> Option<JVBorrowed> {
         if (0..self.len()).contains(&i) {
-            let raw = JVRaw::clone(&*self.0.array_get(i));
+            let raw = self.0.array_get(i);
             Some(
                 raw.try_into()
                     .expect("JV should not have nested invalid value"),
@@ -103,7 +112,7 @@ impl Iterator for OwnedArrayIterator {
     fn next(&mut self) -> Option<Self::Item> {
         let out = self.arr.get(self.i)?;
         self.i += 1;
-        Some(out)
+        Some(out.to_owned())
     }
 }
 
@@ -112,7 +121,7 @@ pub struct BorrowedArrayIterator<'a> {
     arr: &'a JVArray,
 }
 impl<'a> Iterator for BorrowedArrayIterator<'a> {
-    type Item = JV;
+    type Item = JVBorrowed<'a>;
     fn next(&mut self) -> Option<Self::Item> {
         let out = self.arr.get(self.i)?;
         self.i += 1;
@@ -204,19 +213,45 @@ impl TryFrom<JVRaw> for JV {
         }
     }
 }
+impl From<&JVNull> for Value {
+    fn from(_: &JVNull) -> Self {
+        Value::Null
+    }
+}
+impl From<&JVBool> for Value {
+    fn from(b: &JVBool) -> Self {
+        b.value().into()
+    }
+}
+impl From<&JVNumber> for Value {
+    fn from(x: &JVNumber) -> Self {
+        x.value().into()
+    }
+}
+impl From<&JVString> for Value {
+    fn from(s: &JVString) -> Self {
+        s.value().into()
+    }
+}
+impl From<&JVArray> for Value {
+    fn from(arr: &JVArray) -> Self {
+        arr.iter().map(Value::from).collect()
+    }
+}
+impl From<&JVObject> for Value {
+    fn from(obj: &JVObject) -> Self {
+        Value::Object(obj.iter().map(|(k, v)| (k.to_owned(), v.into())).collect())
+    }
+}
 impl From<&JV> for Value {
     fn from(j: &JV) -> Self {
         match j {
-            JV::Null(_) => Value::Null,
-            JV::Bool(b) => b.value().into(),
-            JV::Number(x) => x.value().into(),
-            JV::String(s) => s.value().into(),
-            JV::Array(arr) => arr.iter().map(|x| Value::from(&x)).collect(),
-            JV::Object(obj) => Value::Object(
-                obj.iter()
-                    .map(|(k, v)| (k.to_owned(), (&v).into()))
-                    .collect(),
-            ),
+            JV::Null(n) => n.into(),
+            JV::Bool(b) => b.into(),
+            JV::Number(x) => x.into(),
+            JV::String(s) => s.into(),
+            JV::Array(arr) => arr.into(),
+            JV::Object(obj) => obj.into(),
         }
     }
 }

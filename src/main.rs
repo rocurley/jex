@@ -18,7 +18,7 @@ use unicode_width::UnicodeWidthStr;
 #[cfg(feature = "dev-tools")]
 use cpuprofiler::PROFILER;
 use jed::{
-    cursor::{Cursor, FocusPosition},
+    cursor::Cursor,
     view_tree::{View, ViewFrame, ViewTree, ViewTreeIndex},
 };
 #[cfg(feature = "dev-tools")]

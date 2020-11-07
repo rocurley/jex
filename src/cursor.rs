@@ -147,7 +147,10 @@ fn open_container_end(json: JV) -> (Option<CursorFrame>, JV, FocusPosition) {
                 (None, arr.into(), FocusPosition::Start)
             } else {
                 let index = arr.len() - 1;
-                let child = arr.get(index).expect("Array should not be empty here");
+                let child = arr
+                    .get(index)
+                    .expect("Array should not be empty here")
+                    .to_owned();
                 let focus_position = FocusPosition::ending(&child);
                 (
                     Some(CursorFrame::Array {
@@ -196,6 +199,7 @@ impl CursorFrame {
             Array { index, json } => match json.get(index as i32 + 1) {
                 None => (None, json.into(), FocusPosition::End),
                 Some(child) => {
+                    let child = child.to_owned();
                     let focus_position = FocusPosition::starting(&child);
                     (
                         Some(Array {
@@ -239,6 +243,7 @@ impl CursorFrame {
                     let child = json
                         .get(index as i32)
                         .expect("Stepped back and didn't find a child");
+                    let child = child.to_owned();
                     let focus_position = FocusPosition::ending(&child);
                     (Some(Array { index, json }), child, focus_position)
                 }
@@ -328,7 +333,8 @@ impl Cursor {
                     let json = arr.clone();
                     focus = arr
                         .get(index as i32)
-                        .expect("Shape of path does not match shape of jsons");
+                        .expect("Shape of path does not match shape of jsons")
+                        .to_owned();
                     frames.push(CursorFrame::Array { index, json });
                 }
                 JV::Object(obj) => {

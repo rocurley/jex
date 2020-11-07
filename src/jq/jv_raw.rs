@@ -1,4 +1,4 @@
-use super::jv::JV;
+use super::{jv::JV, jv_borrowed::JVBorrowed};
 use jq_sys::{
     jv, jv_array, jv_array_get, jv_array_length, jv_array_set, jv_bool, jv_copy, jv_equal, jv_free,
     jv_get_kind, jv_get_refcnt, jv_invalid_get_msg, jv_invalid_has_msg, jv_kind_JV_KIND_ARRAY,
@@ -34,7 +34,7 @@ pub(super) struct JVRaw {
 }
 impl fmt::Debug for JVRaw {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "JV{{..}}")
+        write!(f, "JVRaw{{..}}")
     }
 }
 
@@ -80,9 +80,24 @@ pub(super) struct JVRawBorrowed<'a> {
     phantom: PhantomData<&'a JVRaw>,
 }
 
+impl<'a> PartialEq for JVRawBorrowed<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        **self == **other
+    }
+}
+impl<'a> Eq for JVRawBorrowed<'a> {}
+
+impl<'a> fmt::Debug for JVRawBorrowed<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "JVRawBorrowed{{..}}")
+    }
+}
+
 impl<'a> Deref for JVRawBorrowed<'a> {
     type Target = JVRaw;
     fn deref(&self) -> &Self::Target {
+        // Safety: Since the trait bounds the lifetime of the reference to the lifetime of the
+        // reference, it automatically satisfies the requirements of deref (discussed below).
         unsafe { self.deref() }
     }
 }
@@ -311,7 +326,7 @@ pub struct ObjectIterator<'a> {
 }
 
 impl<'a> Iterator for ObjectIterator<'a> {
-    type Item = (&'a str, JV);
+    type Item = (&'a str, JVBorrowed<'a>);
     fn next(&mut self) -> Option<Self::Item> {
         if unsafe { jv_object_iter_valid(self.obj.ptr, self.i) } == 0 {
             return None;
@@ -323,8 +338,11 @@ impl<'a> Iterator for ObjectIterator<'a> {
             }
             .owned_to_borrowed()
         };
-        let v = JVRaw {
-            ptr: unsafe { jv_object_iter_value(self.obj.ptr, self.i) },
+        let v: JVRawBorrowed<'a> = unsafe {
+            JVRaw {
+                ptr: jv_object_iter_value(self.obj.ptr, self.i),
+            }
+            .owned_to_borrowed()
         };
         self.i = unsafe { jv_object_iter_next(self.obj.ptr, self.i) };
         self.remaining -= 1;
@@ -383,13 +401,16 @@ pub struct ObjectValuesIterator<'a> {
 }
 
 impl<'a> Iterator for ObjectValuesIterator<'a> {
-    type Item = JV;
+    type Item = JVBorrowed<'a>;
     fn next(&mut self) -> Option<Self::Item> {
         if unsafe { jv_object_iter_valid(self.obj.ptr, self.i) } == 0 {
             return None;
         }
-        let v = JVRaw {
-            ptr: unsafe { jv_object_iter_value(self.obj.ptr, self.i) },
+        let v: JVRawBorrowed<'a> = unsafe {
+            JVRaw {
+                ptr: jv_object_iter_value(self.obj.ptr, self.i),
+            }
+            .owned_to_borrowed()
         };
         self.i = unsafe { jv_object_iter_next(self.obj.ptr, self.i) };
         self.remaining -= 1;
