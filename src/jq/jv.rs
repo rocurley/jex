@@ -83,7 +83,7 @@ impl JVArray {
     }
     pub fn get(&self, i: i32) -> Option<JV> {
         if (0..self.len()).contains(&i) {
-            let raw = JVRaw::clone(&*self.0.array_get(i));
+            let raw = self.0.array_get(i);
             Some(
                 raw.try_into()
                     .expect("JV should not have nested invalid value"),
