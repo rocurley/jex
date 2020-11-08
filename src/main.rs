@@ -85,6 +85,12 @@ struct BenchMode {}
 //
 // TODO
 // * Long strings
+//   * How this should work exactly is a bit tricky. The cursor serves two purposes: forcing
+//   scrolling and folding values (maybe more things to come). The tricky thing here is that
+//   folding wants to be value-oriented, while scrolling wants to be line-oriented. To reconcile
+//   this, moving up and down will continue to move you to the next value unless the currently
+//   focused value is a long string that extends off the screen in the direction moved. If it is,
+//   moving will instead scroll without changing the focused value.
 // * Edit tree:
 //   * Children can be modified if they have no children
 //   * Allow copying descendents onto another root, so you if you want to modify a tree's root you
@@ -451,7 +457,7 @@ impl App {
                 .borders(Borders::ALL);
             let left_paragraph = left
                 .view
-                .render(layout.left.height, *focus == Focus::Left)
+                .render(left_block.inner(layout.left), *focus == Focus::Left)
                 .block(left_block);
             f.render_widget(left_paragraph, layout.left);
             let right_block = Block::default()
@@ -459,7 +465,7 @@ impl App {
                 .borders(Borders::ALL);
             let right_paragraph = right
                 .view
-                .render(layout.right.height, *focus == Focus::Right)
+                .render(right_block.inner(layout.right), *focus == Focus::Right)
                 .block(right_block);
             f.render_widget(right_paragraph, layout.right);
             if let Some(tree_rect) = layout.tree {

@@ -4,7 +4,7 @@ use crate::{
 };
 use regex::Regex;
 use std::{borrow::Cow, cmp::Ordering, collections::HashSet, fmt, rc::Rc};
-use tui::text::Spans;
+use tui::{layout::Rect, text::Spans};
 
 // Requirements:
 // * Produce the current line
@@ -485,11 +485,11 @@ impl Cursor {
         mut self,
         cursor: Option<&Self>,
         folds: &HashSet<(usize, Vec<usize>)>,
-        line_limit: u16,
+        rect: Rect,
     ) -> Vec<Spans<'static>> {
-        let mut lines = Vec::with_capacity(line_limit as usize);
+        let mut lines = Vec::with_capacity(rect.height as usize);
         lines.push(self.current_line(folds).render(Some(&self) == cursor));
-        for _ in 0..line_limit {
+        for _ in 0..rect.height {
             if self.advance(folds).is_none() {
                 break;
             }

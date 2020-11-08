@@ -8,7 +8,7 @@ use crate::{
 use serde_json::Deserializer;
 use std::{collections::HashSet, io, ops::RangeInclusive, rc::Rc};
 use tui::{
-    layout::Alignment,
+    layout::{Alignment, Rect},
     style::{Color, Style},
     text::{Span, Spans},
     widgets::Paragraph,
@@ -219,9 +219,9 @@ impl View {
     pub fn new<V: Into<Rc<[JV]>>>(values: V) -> Self {
         View::Json(JsonView::new(values))
     }
-    pub fn render(&self, line_limit: u16, has_focus: bool) -> Paragraph {
+    pub fn render(&self, rect: Rect, has_focus: bool) -> Paragraph {
         match self {
-            View::Json(Some(json_view)) => json_view.render(line_limit, has_focus),
+            View::Json(Some(json_view)) => json_view.render(rect, has_focus),
             View::Json(None) => Paragraph::new(Vec::new()),
             View::Error(err) => {
                 let err_text = err
@@ -258,10 +258,10 @@ impl JsonView {
             folds,
         })
     }
-    fn render(&self, line_limit: u16, has_focus: bool) -> Paragraph {
+    fn render(&self, rect: Rect, has_focus: bool) -> Paragraph {
         let JsonView { cursor, scroll, .. } = self;
         let cursor = if has_focus { Some(cursor) } else { None };
-        let text = scroll.clone().render_lines(cursor, &self.folds, line_limit);
+        let text = scroll.clone().render_lines(cursor, &self.folds, rect);
         Paragraph::new(text)
             .style(Style::default().fg(Color::White).bg(Color::Black))
             .alignment(Alignment::Left)
@@ -320,6 +320,7 @@ mod tests {
     use proptest::proptest;
     use serde_json::{Deserializer, Value};
     use std::{collections::HashSet, fs, io};
+    use tui::layout::Rect;
     fn check_folds(values: Vec<Value>) {
         let jsons: Vec<JV> = values.iter().map(|v| v.into()).collect();
         let mut view = match JsonView::new(jsons) {
@@ -357,10 +358,16 @@ mod tests {
         view.cursor = Cursor::new_end(view.values.clone()).unwrap();
         view.scroll = view.cursor.clone();
         let line_limit = 20;
+        let rect = Rect {
+            x: 0,
+            y: 0,
+            width: 30,
+            height: 20,
+        };
         for _ in 0..line_limit - 1 {
             view.scroll.regress(&view.folds);
         }
         view.toggle_fold();
-        view.render(line_limit, true);
+        view.render(rect, true);
     }
 }
