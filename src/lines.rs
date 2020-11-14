@@ -2,21 +2,23 @@ use tui::{
     style::{Color, Modifier, Style},
     text::{Span, Spans},
 };
+use unicode_general_category::{get_general_category, GeneralCategory};
+use unicode_width::UnicodeWidthChar;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Line {
-    pub content: LineContent,
-    pub key: Option<Box<str>>,
+pub struct Line<'a> {
+    pub content: LineContent<'a>,
+    pub key: Option<&'a str>,
     pub indent: u8,
     pub comma: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum LineContent {
+pub enum LineContent<'a> {
     Null,
     Bool(bool),
     Number(f64),
-    String(Box<str>),
+    String(&'a str),
     FoldedArray(usize),
     ArrayStart,
     ArrayEnd,
@@ -25,13 +27,14 @@ pub enum LineContent {
     ObjectEnd,
 }
 
-impl Line {
+use std::fmt::Debug;
+impl<'a> Line<'a> {
     pub fn render(self, is_cursor: bool) -> Spans<'static> {
         let indent_span = Span::raw("  ".repeat(self.indent as usize));
         let mut out = match &self.key {
             Some(key) => vec![
                 indent_span,
-                Span::raw(format!("{:?}", key)),
+                Span::raw(format!("\"{}\"", key)),
                 Span::raw(" : "),
             ],
             _ => vec![indent_span],
@@ -49,7 +52,7 @@ impl Line {
                 }
             }
             LineContent::String(s) => {
-                out.push(Span::styled(format!("{:?}", s), style));
+                out.push(Span::styled(format!("\"{}\"", s), style));
                 if self.comma {
                     out.push(Span::raw(","));
                 }
@@ -106,6 +109,65 @@ impl Line {
             }
         };
         Spans::from(out)
+    }
+}
+
+fn is_unicode_escaped(c: char) -> bool {
+    match get_general_category(c) {
+        GeneralCategory::Control
+        | GeneralCategory::Format
+        | GeneralCategory::Surrogate
+        | GeneralCategory::PrivateUse
+        | GeneralCategory::LineSeparator
+        | GeneralCategory::ParagraphSeparator
+        | GeneralCategory::SpaceSeparator => true,
+        _ => false,
+    }
+}
+
+fn escaped_str(s: &str) -> String {
+    let mut escaped_raw = Vec::new();
+    write_escaped_str(s, &mut escaped_raw).expect("Writing to a vector should be infaliable");
+    String::from_utf8(escaped_raw).expect("Escaped string was not utf-8")
+}
+
+// TODO: Consider an optimized version of this that writes sequences of unescaped characters in one
+// go.
+fn write_escaped_str<W: std::io::Write>(s: &str, w: &mut W) -> std::io::Result<()> {
+    write!(w, "\"")?;
+    for c in s.chars() {
+        write_escaped_char(c, w)?;
+    }
+    write!(w, "\"")?;
+    Ok(())
+}
+
+fn write_escaped_char<W: std::io::Write>(c: char, w: &mut W) -> std::io::Result<()> {
+    match c {
+        '\"' => write!(w, r#"\""#),
+        '\\' => write!(w, r#"\\"#),
+        '/' => write!(w, r#"\/"#),
+        '\u{08}' => write!(w, r#"\b"#),
+        '\u{0C}' => write!(w, r#"\f"#),
+        '\n' => write!(w, r#"\n"#),
+        '\r' => write!(w, r#"\r"#),
+        '\t' => write!(w, r#"\t"#),
+        _ if is_unicode_escaped(c) => write!(w, "\\u{:04x}", c as u32), // \u1234
+        _ => write!(w, "{}", c),
+    }
+}
+
+fn display_width(c: char) -> u8 {
+    match c {
+        '\"' | '\\' | '/' | '\u{08}' | '\u{0C}' | '\n' | '\r' | '\t' => 2,
+        _ if is_unicode_escaped(c) => 6, // \u1234
+        // TODO: It kind of sucks to have this huge table that get_general_category uses and
+        // not even get the width from it. Probably we should make our own table at some point,
+        // with values Escaped | HalfWidth | FullWidth | Special. 2 bits, you could pack that in
+        // pretty nicely.
+        _ => c
+            .width()
+            .expect("control characters should have been filtered out above") as u8,
     }
 }
 
@@ -224,6 +286,22 @@ pub mod memory {
             self.count += other.count;
             self.json_size += other.json_size;
             self.indirect_bytes += other.indirect_bytes;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{display_width, escaped_str};
+    use proptest::prelude::*;
+    use unicode_width::UnicodeWidthStr;
+    proptest! {
+        #[test]
+        fn prop_display_width(string in any::<String>()) {
+            let escaped = escaped_str(&string);
+            let expected_width = escaped.width();
+            let actual_inner_width: usize = string.chars().map(|c| display_width(c) as usize).sum();
+            assert_eq!(expected_width, actual_inner_width + 2, "original: {:?}, escaped: {}", &string, &escaped);
         }
     }
 }

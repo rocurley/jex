@@ -532,6 +532,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tui",
+ "unicode-general-category",
  "unicode-width",
 ]
 
@@ -1205,6 +1206,12 @@ dependencies = [
  "unicode-segmentation",
  "unicode-width",
 ]
+
+[[package]]
+name = "unicode-general-category"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f9af028e052a610d99e066b33304625dea9613170a2563314490a4e6ec5cf7f"
 
 [[package]]
 name = "unicode-segmentation"

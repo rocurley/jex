@@ -23,7 +23,7 @@ pub fn arb_json() -> impl Strategy<Value = Value> {
     )
 }
 
-pub fn json_to_lines<'a, I: Iterator<Item = &'a Value>>(vs: I) -> Vec<Line> {
+pub fn json_to_lines<'a, I: Iterator<Item = &'a Value>>(vs: I) -> Vec<Line<'a>> {
     let mut out = Vec::new();
     for value in vs {
         json_to_lines_inner(None, value, 0, &mut out, false);
@@ -31,11 +31,11 @@ pub fn json_to_lines<'a, I: Iterator<Item = &'a Value>>(vs: I) -> Vec<Line> {
     out
 }
 
-fn push_line(
-    key: Option<Box<str>>,
-    content: LineContent,
+fn push_line<'a>(
+    key: Option<&'a str>,
+    content: LineContent<'a>,
     indent: u8,
-    out: &mut Vec<Line>,
+    out: &mut Vec<Line<'a>>,
     comma: bool,
 ) {
     let line = Line {
@@ -47,11 +47,11 @@ fn push_line(
     out.push(line);
 }
 
-fn json_to_lines_inner(
-    key: Option<Box<str>>,
-    v: &Value,
+fn json_to_lines_inner<'a>(
+    key: Option<&'a str>,
+    v: &'a Value,
     indent: u8,
-    out: &mut Vec<Line>,
+    out: &mut Vec<Line<'a>>,
     comma: bool,
 ) {
     match v {

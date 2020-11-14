@@ -377,7 +377,7 @@ impl Cursor {
             _ => match self.frames.last() {
                 None => None,
                 Some(CursorFrame::Array { .. }) => None,
-                Some(CursorFrame::Object { key, .. }) => Some(key.clone().into()),
+                Some(CursorFrame::Object { key, .. }) => Some(key.as_str()),
             },
         };
         let comma = match self.focus_position {
@@ -469,17 +469,6 @@ impl Cursor {
             self.focus_position = FocusPosition::Start;
         }
         Some(())
-    }
-    pub fn lines_from(
-        mut self,
-        folds: &HashSet<(usize, Vec<usize>)>,
-    ) -> impl Iterator<Item = Line> + '_ {
-        let first_line = self.current_line(folds);
-        let rest = std::iter::from_fn(move || {
-            self.advance(folds)?;
-            Some(self.current_line(folds))
-        });
-        std::iter::once(first_line).chain(rest)
     }
     pub fn render_lines(
         mut self,
@@ -636,6 +625,7 @@ mod tests {
     use super::Cursor;
     use crate::{
         jq::jv::JV,
+        lines::Line,
         testing::{arb_json, json_to_lines},
     };
     use pretty_assertions::assert_eq;
@@ -664,15 +654,16 @@ mod tests {
         fn prop_lines(values in proptest::collection::vec(arb_json(), 1..10)) {
             let jsons : Vec<JV> = values.iter().map(|v| v.into()).collect();
             let folds = HashSet::new();
-            let mut actual_lines = Vec::new();
+            let mut expected_lines = json_to_lines(values.iter()).into_iter();
             if let Some(mut cursor) = Cursor::new(jsons.into()) {
+                let mut actual_lines = Vec::new();
                 actual_lines.push(cursor.current_line(&folds));
+                assert_eq!(cursor.current_line(&folds), expected_lines.next().expect("Expected lines shorter than actual lines"));
                 while let Some(()) = cursor.advance(&folds) {
-                    actual_lines.push(cursor.current_line(&folds));
+                    assert_eq!(cursor.current_line(&folds), expected_lines.next().expect("Expected lines shorter than actual lines"));
                 }
             }
-            let expected_lines = json_to_lines(values.iter());
-            assert_eq!(actual_lines, expected_lines);
+            assert!(expected_lines.next().is_none());
         }
     }
     fn check_path_roundtrip(cursor: &Cursor, jsons: Rc<[JV]>) {
