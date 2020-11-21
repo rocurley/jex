@@ -30,7 +30,7 @@ pub enum LineContent<'a> {
 
 use std::fmt::Debug;
 impl<'a> Line<'a> {
-    pub fn render(self, is_cursor: bool, width: u16) -> Spans<'static> {
+    pub fn render(self, is_cursor: bool, width: u16) -> Vec<Spans<'static>> {
         let indent_span = Span::raw("  ".repeat(self.indent as usize));
         let mut out = match &self.key {
             Some(key) => vec![
@@ -55,14 +55,28 @@ impl<'a> Line<'a> {
             LineContent::String(s) => {
                 let consumed_width: u16 = out.iter().map(|span| span.width() as u16).sum();
                 let remainining_width = width.saturating_sub(consumed_width);
-                let escaped_line = escaped_lines(s, remainining_width)
+                let mut escaped_lines = escaped_lines(s, remainining_width);
+                let escaped_line = escaped_lines
                     .next()
                     .expect("escaped_lines must return at least 1 line")
                     .to_string();
                 out.push(Span::styled(escaped_line, style));
-                if self.comma {
-                    out.push(Span::raw(","));
+                let mut out = vec![Spans::from(out)];
+                for escaped_line in escaped_lines {
+                    let padding = Span::raw(" ".repeat(consumed_width as usize));
+                    out.push(Spans::from(vec![
+                        padding,
+                        Span::styled(escaped_line.to_string(), style),
+                    ]));
                 }
+                if self.comma {
+                    // TODO: check if the comma will fit
+                    out.last_mut()
+                        .expect("out cannot be empty")
+                        .0
+                        .push(Span::raw(","));
+                }
+                return out;
             }
             LineContent::Bool(b) => {
                 out.push(Span::styled(b.to_string(), style));
@@ -115,7 +129,7 @@ impl<'a> Line<'a> {
                 }
             }
         };
-        Spans::from(out)
+        vec![Spans::from(out)]
     }
 }
 

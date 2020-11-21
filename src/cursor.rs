@@ -477,16 +477,18 @@ impl Cursor {
         rect: Rect,
     ) -> Vec<Spans<'static>> {
         let mut lines = Vec::with_capacity(rect.height as usize);
-        lines.push(
-            self.current_line(folds)
+        lines.append(
+            &mut self
+                .current_line(folds)
                 .render(Some(&self) == cursor, rect.width),
         );
         for _ in 0..rect.height {
             if self.advance(folds).is_none() {
                 break;
             }
-            lines.push(
-                self.current_line(folds)
+            lines.append(
+                &mut self
+                    .current_line(folds)
                     .render(Some(&self) == cursor, rect.width),
             );
         }
