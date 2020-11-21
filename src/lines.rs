@@ -34,7 +34,7 @@ impl<'a> Line<'a> {
         let mut out = match &self.key {
             Some(key) => vec![
                 indent_span,
-                Span::raw(format!("\"{}\"", key)),
+                Span::raw(format!("\"{}\"", escaped_str(key))),
                 Span::raw(" : "),
             ],
             _ => vec![indent_span],
@@ -52,7 +52,7 @@ impl<'a> Line<'a> {
                 }
             }
             LineContent::String(s) => {
-                out.push(Span::styled(format!("\"{}\"", s), style));
+                out.push(Span::styled(format!("\"{}\"", escaped_str(s)), style));
                 if self.comma {
                     out.push(Span::raw(","));
                 }
@@ -134,11 +134,9 @@ fn escaped_str(s: &str) -> String {
 // TODO: Consider an optimized version of this that writes sequences of unescaped characters in one
 // go.
 fn write_escaped_str<W: std::io::Write>(s: &str, w: &mut W) -> std::io::Result<()> {
-    write!(w, "\"")?;
     for c in s.chars() {
         write_escaped_char(c, w)?;
     }
-    write!(w, "\"")?;
     Ok(())
 }
 
@@ -146,7 +144,6 @@ fn write_escaped_char<W: std::io::Write>(c: char, w: &mut W) -> std::io::Result<
     match c {
         '\"' => write!(w, r#"\""#),
         '\\' => write!(w, r#"\\"#),
-        '/' => write!(w, r#"\/"#),
         '\u{08}' => write!(w, r#"\b"#),
         '\u{0C}' => write!(w, r#"\f"#),
         '\n' => write!(w, r#"\n"#),
@@ -159,7 +156,7 @@ fn write_escaped_char<W: std::io::Write>(c: char, w: &mut W) -> std::io::Result<
 
 fn display_width(c: char) -> u8 {
     match c {
-        '\"' | '\\' | '/' | '\u{08}' | '\u{0C}' | '\n' | '\r' | '\t' => 2,
+        '\"' | '\\' | '\u{08}' | '\u{0C}' | '\n' | '\r' | '\t' => 2,
         _ if is_unicode_escaped(c) => 6, // \u1234
         // TODO: It kind of sucks to have this huge table that get_general_category uses and
         // not even get the width from it. Probably we should make our own table at some point,
@@ -168,6 +165,71 @@ fn display_width(c: char) -> u8 {
         _ => c
             .width()
             .expect("control characters should have been filtered out above") as u8,
+    }
+}
+
+struct StrLine<'a> {
+    is_start: bool,
+    is_end: bool,
+    raw: &'a str,
+}
+
+impl<'a> StrLine<'a> {
+    fn to_string(&self) -> String {
+        let mut escaped_raw = Vec::new();
+        if self.is_start {
+            write!(&mut escaped_raw, "\"");
+        }
+        write_escaped_str(self.raw, &mut escaped_raw);
+        if self.is_end {
+            write!(&mut escaped_raw, "\"");
+        }
+        String::from_utf8(escaped_raw).expect("Escaped string was not utf-8")
+    }
+}
+
+struct StrLineIter<'a> {
+    width: u8,
+    is_start: bool,
+    rest: &'a str,
+    done: bool,
+}
+
+impl<'a> Iterator for StrLineIter<'a> {
+    type Item = StrLine<'a>;
+    fn next(&mut self) -> Option<Self::Item> {
+        let is_start = self.is_start;
+        self.is_start = false;
+        let mut width = if is_start { self.width - 1 } else { self.width };
+        let mut chars = self.rest.char_indices();
+        loop {
+            let (i, c) = match chars.next() {
+                None => {
+                    let raw = self.rest;
+                    self.rest = "";
+                    // Do we need another line with just the close quote?
+                    self.done = width > 0;
+                    return Some(StrLine {
+                        is_start,
+                        is_end: self.done,
+                        raw,
+                    });
+                }
+                Some(pair) => pair,
+            };
+            match width.checked_sub(display_width(c)) {
+                None => {
+                    let raw = &self.rest[..i];
+                    self.rest = &self.rest[i..];
+                    return Some(StrLine {
+                        is_start,
+                        is_end: false,
+                        raw,
+                    });
+                }
+                Some(w) => width = w,
+            };
+        }
     }
 }
 
@@ -301,7 +363,7 @@ mod tests {
             let escaped = escaped_str(&string);
             let expected_width = escaped.width();
             let actual_inner_width: usize = string.chars().map(|c| display_width(c) as usize).sum();
-            assert_eq!(expected_width, actual_inner_width + 2, "original: {:?}, escaped: {}", &string, &escaped);
+            assert_eq!(expected_width, actual_inner_width , "original: {:?}, escaped: {}", &string, &escaped);
         }
     }
 }
