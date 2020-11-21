@@ -1,3 +1,4 @@
+use std::io::Write;
 use tui::{
     style::{Color, Modifier, Style},
     text::{Span, Spans},
@@ -29,7 +30,7 @@ pub enum LineContent<'a> {
 
 use std::fmt::Debug;
 impl<'a> Line<'a> {
-    pub fn render(self, is_cursor: bool) -> Spans<'static> {
+    pub fn render(self, is_cursor: bool, width: u16) -> Spans<'static> {
         let indent_span = Span::raw("  ".repeat(self.indent as usize));
         let mut out = match &self.key {
             Some(key) => vec![
@@ -52,7 +53,13 @@ impl<'a> Line<'a> {
                 }
             }
             LineContent::String(s) => {
-                out.push(Span::styled(format!("\"{}\"", escaped_str(s)), style));
+                let consumed_width: u16 = out.iter().map(|span| span.width() as u16).sum();
+                let remainining_width = width.saturating_sub(consumed_width);
+                let escaped_line = escaped_lines(s, remainining_width)
+                    .next()
+                    .expect("escaped_lines must return at least 1 line")
+                    .to_string();
+                out.push(Span::styled(escaped_line, style));
                 if self.comma {
                     out.push(Span::raw(","));
                 }
@@ -189,7 +196,7 @@ impl<'a> StrLine<'a> {
 }
 
 struct StrLineIter<'a> {
-    width: u8,
+    width: u16,
     is_start: bool,
     rest: &'a str,
     done: bool,
@@ -198,6 +205,18 @@ struct StrLineIter<'a> {
 impl<'a> Iterator for StrLineIter<'a> {
     type Item = StrLine<'a>;
     fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+        if self.width == 0 {
+            self.done = true;
+            // This is a bad situation....
+            return Some(StrLine {
+                is_start: true,
+                is_end: true,
+                raw: "",
+            });
+        }
         let is_start = self.is_start;
         self.is_start = false;
         let mut width = if is_start { self.width - 1 } else { self.width };
@@ -217,7 +236,7 @@ impl<'a> Iterator for StrLineIter<'a> {
                 }
                 Some(pair) => pair,
             };
-            match width.checked_sub(display_width(c)) {
+            match width.checked_sub(display_width(c) as u16) {
                 None => {
                     let raw = &self.rest[..i];
                     self.rest = &self.rest[i..];
@@ -230,6 +249,15 @@ impl<'a> Iterator for StrLineIter<'a> {
                 Some(w) => width = w,
             };
         }
+    }
+}
+
+fn escaped_lines<'a>(s: &'a str, width: u16) -> StrLineIter<'a> {
+    StrLineIter {
+        width,
+        is_start: true,
+        rest: s,
+        done: false,
     }
 }
 
