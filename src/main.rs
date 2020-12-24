@@ -239,6 +239,10 @@ fn run(json_path: String) -> Result<(), io::Error> {
         };
         let view_frame = app.focused_view_mut();
         let line_limit = view_rect.height as usize - 2;
+        let json_frame = Rect {
+            height: view_rect.height - 2,
+            ..view_rect
+        };
         match &mut view_frame.view {
             View::Error(_) => {}
             View::Json(None) => {}
@@ -246,7 +250,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
                 KeyCode::Down => {
                     view.cursor.advance(&view.folds);
                     if !view
-                        .visible_range(&view.folds, line_limit)
+                        .visible_range(&view.folds, json_frame)
                         .contains(&view.cursor.to_path())
                     {
                         view.scroll.advance(&view.folds);
@@ -255,7 +259,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
                 KeyCode::Up => {
                     view.cursor.regress(&view.folds);
                     if !view
-                        .visible_range(&view.folds, line_limit)
+                        .visible_range(&view.folds, json_frame)
                         .contains(&view.cursor.to_path())
                     {
                         view.scroll.regress(&view.folds);

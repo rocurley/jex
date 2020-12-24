@@ -273,6 +273,49 @@ impl CursorFrame {
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
+pub struct LineCursor {
+    pub cursor: Cursor,
+    pub line_start: usize,
+}
+impl LineCursor {
+    pub fn new(jsons: Rc<[JV]>) -> Option<Self> {
+        let cursor = Cursor::new(jsons)?;
+        Some(LineCursor {
+            cursor,
+            line_start: 0,
+        })
+    }
+    pub fn render_lines(
+        &mut self,
+        cursor: Option<&Cursor>,
+        folds: &HashSet<(usize, Vec<usize>)>,
+        rect: Rect,
+    ) -> Vec<Spans<'static>> {
+        let mut lines = Vec::with_capacity(rect.height as usize);
+        lines.append(&mut self.cursor.current_line(folds).render(
+            Some(&self.cursor) == cursor,
+            rect.width,
+            self.line_start,
+        ));
+        while lines.len() < rect.height as usize {
+            if self.cursor.advance(folds).is_none() {
+                break;
+            }
+            let new_lines =
+                self.cursor
+                    .current_line(folds)
+                    .render(Some(&self.cursor) == cursor, rect.width, 0);
+            lines.extend(
+                new_lines
+                    .into_iter()
+                    .take(rect.height as usize - lines.len()),
+            );
+        }
+        lines
+    }
+}
+
+#[derive(PartialEq, Eq, Debug, Clone)]
 pub struct Cursor {
     // Top level jsons of the view
     pub jsons: Rc<[JV]>,
@@ -470,30 +513,6 @@ impl Cursor {
         }
         Some(())
     }
-    pub fn render_lines(
-        mut self,
-        cursor: Option<&Self>,
-        folds: &HashSet<(usize, Vec<usize>)>,
-        rect: Rect,
-    ) -> Vec<Spans<'static>> {
-        let mut lines = Vec::with_capacity(rect.height as usize);
-        lines.append(
-            &mut self
-                .current_line(folds)
-                .render(Some(&self) == cursor, rect.width),
-        );
-        for _ in 0..rect.height {
-            if self.advance(folds).is_none() {
-                break;
-            }
-            lines.append(
-                &mut self
-                    .current_line(folds)
-                    .render(Some(&self) == cursor, rect.width),
-            );
-        }
-        lines
-    }
     fn leaf_to_string(&self) -> Option<Cow<str>> {
         match &self.focus {
             JV::Null(_) => Some("null".into()),
@@ -633,7 +652,6 @@ mod tests {
     use super::Cursor;
     use crate::{
         jq::jv::JV,
-        lines::Line,
         testing::{arb_json, json_to_lines},
     };
     use pretty_assertions::assert_eq;

@@ -30,7 +30,9 @@ pub enum LineContent<'a> {
 
 use std::fmt::Debug;
 impl<'a> Line<'a> {
-    pub fn render(self, is_cursor: bool, width: u16) -> Vec<Spans<'static>> {
+    // TODO: wrapping for non-strings (keys???)
+    // TODO: Max line count (we don't get any efficiency gain until we have this!)
+    pub fn render(self, is_cursor: bool, width: u16, start_byte: usize) -> Vec<Spans<'static>> {
         let indent_span = Span::raw("  ".repeat(self.indent as usize));
         let mut out = match &self.key {
             Some(key) => vec![
@@ -55,13 +57,21 @@ impl<'a> Line<'a> {
             LineContent::String(s) => {
                 let consumed_width: u16 = out.iter().map(|span| span.width() as u16).sum();
                 let remainining_width = width.saturating_sub(consumed_width);
-                let mut escaped_lines = escaped_lines(s, remainining_width);
-                let escaped_line = escaped_lines
-                    .next()
-                    .expect("escaped_lines must return at least 1 line")
-                    .to_string();
-                out.push(Span::styled(escaped_line, style));
-                let mut out = vec![Spans::from(out)];
+                // TODO: rename this or the other one, it's confusing
+                let (mut out, mut escaped_lines) = if start_byte == 0 {
+                    let mut escaped_lines = escaped_lines(s, remainining_width);
+                    let escaped_line = escaped_lines
+                        .next()
+                        .expect("escaped_lines must return at least 1 line")
+                        .to_string();
+                    out.push(Span::styled(escaped_line, style));
+                    (vec![Spans::from(out)], escaped_lines)
+                } else {
+                    (
+                        Vec::new(),
+                        escaped_lines(&s[start_byte..], remainining_width),
+                    )
+                };
                 for escaped_line in escaped_lines {
                     let padding = Span::raw(" ".repeat(consumed_width as usize));
                     out.push(Spans::from(vec![
