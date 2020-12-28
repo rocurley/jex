@@ -253,7 +253,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
                         .visible_range(&view.folds, json_frame)
                         .contains(&view.cursor.to_path())
                     {
-                        view.scroll.advance(&view.folds);
+                        view.scroll.advance(&view.folds, view_rect);
                     }
                 }
                 KeyCode::Up => {
@@ -262,7 +262,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
                         .visible_range(&view.folds, json_frame)
                         .contains(&view.cursor.to_path())
                     {
-                        view.scroll.regress(&view.folds);
+                        view.scroll.regress(&view.folds, view_rect);
                     }
                 }
                 KeyCode::Char('z') => {

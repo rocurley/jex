@@ -30,6 +30,21 @@ pub enum LineContent<'a> {
 
 use std::fmt::Debug;
 impl<'a> Line<'a> {
+    // TODO: something less hilariously inefficient
+    pub fn content_width(&self, width: u16) -> u16 {
+        let indent_span = Span::raw("  ".repeat(self.indent as usize));
+        let mut out = match &self.key {
+            Some(key) => vec![
+                indent_span,
+                Span::raw(format!("\"{}\"", escaped_str(key))),
+                Span::raw(" : "),
+            ],
+            _ => vec![indent_span],
+        };
+        let consumed_width: u16 = out.iter().map(|span| span.width() as u16).sum();
+        let remainining_width = width.saturating_sub(consumed_width);
+        remainining_width
+    }
     // TODO: wrapping for non-strings (keys???)
     // TODO: Max line count (we don't get any efficiency gain until we have this!)
     pub fn render(self, is_cursor: bool, width: u16, start_byte: usize) -> Vec<Spans<'static>> {
@@ -199,10 +214,11 @@ fn display_width(c: char) -> u8 {
     }
 }
 
-struct StrLine<'a> {
-    is_start: bool,
-    is_end: bool,
-    raw: &'a str,
+pub struct StrLine<'a> {
+    pub is_start: bool,
+    pub is_end: bool,
+    pub raw: &'a str,
+    pub start: usize,
 }
 
 impl<'a> StrLine<'a> {
@@ -219,11 +235,11 @@ impl<'a> StrLine<'a> {
     }
 }
 
-struct StrLineIter<'a> {
-    width: u16,
-    is_start: bool,
-    rest: &'a str,
-    done: bool,
+pub struct StrLineIter<'a> {
+    pub width: u16,
+    pub start: usize,
+    pub rest: &'a str,
+    pub done: bool,
 }
 
 impl<'a> Iterator for StrLineIter<'a> {
@@ -239,10 +255,10 @@ impl<'a> Iterator for StrLineIter<'a> {
                 is_start: true,
                 is_end: true,
                 raw: "",
+                start: self.start,
             });
         }
-        let is_start = self.is_start;
-        self.is_start = false;
+        let is_start = self.start == 0;
         let mut width = if is_start { self.width - 1 } else { self.width };
         let mut chars = self.rest.char_indices();
         loop {
@@ -252,10 +268,13 @@ impl<'a> Iterator for StrLineIter<'a> {
                     self.rest = "";
                     // Do we need another line with just the close quote?
                     self.done = width > 0;
+                    let start = self.start;
+                    self.start += raw.len();
                     return Some(StrLine {
                         is_start,
                         is_end: self.done,
                         raw,
+                        start,
                     });
                 }
                 Some(pair) => pair,
@@ -264,10 +283,13 @@ impl<'a> Iterator for StrLineIter<'a> {
                 None => {
                     let raw = &self.rest[..i];
                     self.rest = &self.rest[i..];
+                    let start = self.start;
+                    self.start += raw.len();
                     return Some(StrLine {
                         is_start,
                         is_end: false,
                         raw,
+                        start,
                     });
                 }
                 Some(w) => width = w,
@@ -279,7 +301,7 @@ impl<'a> Iterator for StrLineIter<'a> {
 fn escaped_lines<'a>(s: &'a str, width: u16) -> StrLineIter<'a> {
     StrLineIter {
         width,
-        is_start: true,
+        start: 0,
         rest: s,
         done: false,
     }

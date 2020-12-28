@@ -1,6 +1,6 @@
 use crate::{
     jq::jv::{JVArray, JVObject, OwnedObjectIterator, JV},
-    lines::{Line, LineContent},
+    lines::{Line, LineContent, StrLineIter},
 };
 use regex::Regex;
 use std::{borrow::Cow, cmp::Ordering, collections::HashSet, fmt, rc::Rc};
@@ -312,6 +312,28 @@ impl LineCursor {
             );
         }
         lines
+    }
+    pub fn advance(&mut self, folds: &HashSet<(usize, Vec<usize>)>, rect: Rect) -> Option<()> {
+        let line = self.cursor.current_line(folds);
+        if let LineContent::String(s) = line.content {
+            let content_width = line.content_width(rect.width);
+            let next_line = StrLineIter {
+                width: content_width,
+                start: self.line_start,
+                rest: &s[self.line_start..],
+                done: false,
+            }
+            .next();
+            match next_line {
+                Some(next_line) => {
+                    self.line_start = next_line.start;
+                    Some(())
+                }
+                None => self.cursor.advance(folds),
+            }
+        } else {
+            self.cursor.advance(folds)
+        }
     }
 }
 
