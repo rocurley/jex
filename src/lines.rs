@@ -166,7 +166,11 @@ fn is_unicode_escaped(c: char) -> bool {
         | GeneralCategory::PrivateUse
         | GeneralCategory::LineSeparator
         | GeneralCategory::ParagraphSeparator
-        | GeneralCategory::SpaceSeparator => true,
+        | GeneralCategory::SpaceSeparator
+        // Combining characters
+        | GeneralCategory::SpacingMark
+        | GeneralCategory::EnclosingMark
+        | GeneralCategory::NonspacingMark => true,
         _ => false,
     }
 }
@@ -237,72 +241,78 @@ impl<'a> StrLine<'a> {
 
 pub struct StrLineIter<'a> {
     pub width: u16,
-    pub start: usize,
-    pub rest: &'a str,
+    pub start: usize,      // bytes
+    line_widths: Vec<u16>, //bytes
+    current_line: usize,
+    pub str: &'a str,
     pub done: bool,
+}
+
+impl<'a> StrLineIter<'a> {
+    fn peek_from(&self, start: usize) -> Option<StrLine<'a>> {
+        let is_start = start == 0;
+        // open quote
+        let width = if is_start { self.width - 1 } else { self.width };
+        let rest = &self.str[start..];
+        let (raw, width) = take_width(rest, width);
+        // Do we need another line with just the close quote?
+        let is_end = raw.len() == rest.len() && width > 0;
+        return Some(StrLine {
+            is_start,
+            is_end,
+            raw,
+            start,
+        });
+    }
+    pub fn peek_prev(&self) -> Option<StrLine<'a>> {
+        let line = self.current_line.checked_sub(1)?;
+        let start = self.start - self.line_widths[line] as usize;
+        self.peek_from(start)
+    }
+    pub fn peek_next(&self) -> Option<StrLine<'a>> {
+        if self.done {
+            return None;
+        }
+        self.peek_from(self.start)
+    }
+}
+
+fn take_width(s: &str, mut width: u16) -> (&str, u16) {
+    for (i, c) in s.char_indices() {
+        match width.checked_sub(display_width(c) as u16) {
+            None => {
+                let raw = &s[..i];
+                return (&s[..i], width);
+            }
+            Some(w) => width = w,
+        };
+    }
+    (s, width)
 }
 
 impl<'a> Iterator for StrLineIter<'a> {
     type Item = StrLine<'a>;
     fn next(&mut self) -> Option<Self::Item> {
-        if self.done {
-            return None;
+        let next = self.peek_next()?;
+        self.done = next.is_end;
+        self.start += next.raw.len();
+        match self.line_widths.len().cmp(&self.current_line) {
+            std::cmp::Ordering::Less => panic!("line_widths hasn't been maintained"),
+            std::cmp::Ordering::Equal => self.line_widths.push(next.raw.len() as u16),
+            std::cmp::Ordering::Greater => {}
         }
-        if self.width == 0 {
-            self.done = true;
-            // This is a bad situation....
-            return Some(StrLine {
-                is_start: true,
-                is_end: true,
-                raw: "",
-                start: self.start,
-            });
-        }
-        let is_start = self.start == 0;
-        let mut width = if is_start { self.width - 1 } else { self.width };
-        let mut chars = self.rest.char_indices();
-        loop {
-            let (i, c) = match chars.next() {
-                None => {
-                    let raw = self.rest;
-                    self.rest = "";
-                    // Do we need another line with just the close quote?
-                    self.done = width > 0;
-                    let start = self.start;
-                    self.start += raw.len();
-                    return Some(StrLine {
-                        is_start,
-                        is_end: self.done,
-                        raw,
-                        start,
-                    });
-                }
-                Some(pair) => pair,
-            };
-            match width.checked_sub(display_width(c) as u16) {
-                None => {
-                    let raw = &self.rest[..i];
-                    self.rest = &self.rest[i..];
-                    let start = self.start;
-                    self.start += raw.len();
-                    return Some(StrLine {
-                        is_start,
-                        is_end: false,
-                        raw,
-                        start,
-                    });
-                }
-                Some(w) => width = w,
-            };
-        }
+        self.current_line += 1;
+        Some(next)
     }
 }
 
-fn escaped_lines<'a>(s: &'a str, width: u16) -> StrLineIter<'a> {
+fn escaped_lines<'a>(str: &'a str, width: u16) -> StrLineIter<'a> {
     StrLineIter {
         width,
         start: 0,
-        rest: s,
+        line_widths: Vec::new(),
+        current_line: 0,
+        str,
         done: false,
     }
 }

@@ -315,15 +315,15 @@ impl LineCursor {
     }
     pub fn advance(&mut self, folds: &HashSet<(usize, Vec<usize>)>, rect: Rect) -> Option<()> {
         let line = self.cursor.current_line(folds);
-        if let LineContent::String(s) = line.content {
+        if let LineContent::String(str) = line.content {
             let content_width = line.content_width(rect.width);
             let next_line = StrLineIter {
                 width: content_width,
                 start: self.line_start,
-                rest: &s[self.line_start..],
+                str,
                 done: false,
             }
-            .next();
+            .peek_next();
             match next_line {
                 Some(next_line) => {
                     self.line_start = next_line.start;
