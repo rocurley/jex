@@ -1,4 +1,5 @@
-use std::io::Write;
+use crate::jq::jv::JVString;
+use std::{cell::RefCell, io::Write};
 use tui::{
     style::{Color, Modifier, Style},
     text::{Span, Spans},
@@ -47,7 +48,12 @@ impl<'a> Line<'a> {
     }
     // TODO: wrapping for non-strings (keys???)
     // TODO: Max line count (we don't get any efficiency gain until we have this!)
-    pub fn render(self, is_cursor: bool, width: u16, start_byte: usize) -> Vec<Spans<'static>> {
+    pub fn render(
+        self,
+        is_cursor: bool,
+        width: u16,
+        line_cursor: Option<LineCursor>,
+    ) -> Vec<Spans<'static>> {
         let indent_span = Span::raw("  ".repeat(self.indent as usize));
         let mut out = match &self.key {
             Some(key) => vec![
@@ -69,30 +75,27 @@ impl<'a> Line<'a> {
                     out.push(Span::raw(","));
                 }
             }
-            LineContent::String(s) => {
+            LineContent::String(_) => {
+                let mut line_cursor =
+                    line_cursor.expect("line_cursor is mandatory when passed a string");
                 let consumed_width: u16 = out.iter().map(|span| span.width() as u16).sum();
                 let remainining_width = width.saturating_sub(consumed_width);
                 // TODO: rename this or the other one, it's confusing
-                let (mut out, mut escaped_lines) = if start_byte == 0 {
-                    let mut escaped_lines = escaped_lines(s, remainining_width);
-                    let escaped_line = escaped_lines
-                        .next()
-                        .expect("escaped_lines must return at least 1 line")
-                        .to_string();
+                let mut out = if line_cursor.current_line().unwrap() == 0 {
+                    let escaped_line = line_cursor.current().unwrap().to_string();
+                    line_cursor.move_next();
                     out.push(Span::styled(escaped_line, style));
-                    (vec![Spans::from(out)], escaped_lines)
+                    vec![Spans::from(out)]
                 } else {
-                    (
-                        Vec::new(),
-                        escaped_lines(&s[start_byte..], remainining_width),
-                    )
+                    Vec::new()
                 };
-                for escaped_line in escaped_lines {
+                while let Some(escaped_line) = line_cursor.current() {
                     let padding = Span::raw(" ".repeat(consumed_width as usize));
                     out.push(Spans::from(vec![
                         padding,
                         Span::styled(escaped_line.to_string(), style),
                     ]));
+                    line_cursor.move_next();
                 }
                 if self.comma {
                     // TODO: check if the comma will fit
@@ -239,82 +242,122 @@ impl<'a> StrLine<'a> {
     }
 }
 
-pub struct LineCursor<'a> {
-    pub width: u16,
-    pub start: usize,      // bytes
-    line_widths: Vec<u16>, //bytes
-    current_line: usize,
-    pub str: &'a str,
-    pub done: bool,
+enum LineCursorPosition {
+    Start,
+    End,
+    Valid {
+        start: usize, // bytes
+        current_line: usize,
+    },
 }
 
-impl<'a> LineCursor<'a> {
-    fn peek_from(&self, start: usize) -> Option<StrLine<'a>> {
-        let is_start = start == 0;
-        // open quote
-        let width = if is_start { self.width - 1 } else { self.width };
-        let rest = &self.str[start..];
-        let (raw, width) = take_width(rest, width);
-        // Do we need another line with just the close quote?
-        let is_end = raw.len() == rest.len() && width > 0;
-        return Some(StrLine {
-            is_start,
-            is_end,
-            raw,
-            start,
-        });
-    }
-    pub fn peek_prev(&self) -> Option<StrLine<'a>> {
-        let line = self.current_line.checked_sub(1)?;
-        let start = self.start - self.line_widths[line] as usize;
-        self.peek_from(start)
-    }
-    pub fn peek_next(&self) -> Option<StrLine<'a>> {
-        if self.done {
-            return None;
-        }
-        self.peek_from(self.start)
-    }
+pub struct LineCursor {
+    width: u16,
+    line_widths: RefCell<Vec<u16>>, //bytes
+    position: LineCursorPosition,
+    value: JVString,
 }
 
-fn take_width(s: &str, mut width: u16) -> (&str, u16) {
-    for (i, c) in s.char_indices() {
-        match width.checked_sub(display_width(c) as u16) {
-            None => {
-                let raw = &s[..i];
-                return (&s[..i], width);
+impl LineCursor {
+    pub fn current(&self) -> Option<StrLine> {
+        match self.position {
+            LineCursorPosition::Start | LineCursorPosition::End => None,
+            LineCursorPosition::Valid {
+                start,
+                current_line,
+            } => {
+                let is_start = start == 0;
+                let line_widths = self.line_widths.borrow();
+                let end = start + line_widths[current_line] as usize;
+                // We guarantee that we'll push an empty line to line_widths if we scroll to the
+                // end and there's no room for a closing quote.
+                let is_end =
+                    self.value.value().len() == end && current_line == line_widths.len() - 1;
+                let raw = &self.value.value()[start..end];
+                Some(StrLine {
+                    is_start,
+                    is_end,
+                    raw,
+                    start,
+                })
             }
-            Some(w) => width = w,
+        }
+    }
+    fn extend_line_widths(line_widths: &mut Vec<u16>, s: &str, width: u16) {
+        let (line, line_term_width) = take_width(s, width);
+        line_widths.push(line.len() as u16);
+        if line.len() == s.len() && line_term_width == width {
+            // Everything but the closing quote fits on this line
+            line_widths.push(0);
         };
     }
-    (s, width)
-}
-
-impl<'a> Iterator for LineCursor<'a> {
-    type Item = StrLine<'a>;
-    fn next(&mut self) -> Option<Self::Item> {
-        let next = self.peek_next()?;
-        self.done = next.is_end;
-        self.start += next.raw.len();
-        match self.line_widths.len().cmp(&self.current_line) {
-            std::cmp::Ordering::Less => panic!("line_widths hasn't been maintained"),
-            std::cmp::Ordering::Equal => self.line_widths.push(next.raw.len() as u16),
-            std::cmp::Ordering::Greater => {}
+    pub fn move_next(&mut self) {
+        let line_widths = self.line_widths.borrow_mut();
+        match self.position {
+            LineCursorPosition::Start => {
+                if line_widths.is_empty() {
+                    // width - 1 for the opening quote
+                    Self::extend_line_widths(&mut line_widths, self.value.value(), self.width - 1);
+                }
+                self.position = LineCursorPosition::Valid {
+                    current_line: 0,
+                    start: 0,
+                }
+            }
+            LineCursorPosition::End => {}
+            LineCursorPosition::Valid {
+                current_line,
+                start,
+            } => {
+                start += line_widths[current_line] as usize;
+                current_line += 1;
+                if current_line == line_widths.len() {
+                    let s = self.value.value();
+                    if start == s.len() {
+                        self.position = LineCursorPosition::End;
+                    } else {
+                        Self::extend_line_widths(&mut line_widths, s, self.width);
+                    }
+                }
+            }
         }
-        self.current_line += 1;
-        Some(next)
+    }
+    pub fn move_prev(&mut self) {
+        let line_widths = self.line_widths.borrow_mut();
+        match self.position {
+            LineCursorPosition::Start => {}
+            LineCursorPosition::End => {}
+            LineCursorPosition::Valid { current_line, .. } if current_line == 0 => {
+                self.position = LineCursorPosition::Start
+            }
+            LineCursorPosition::Valid {
+                current_line,
+                start,
+            } => {
+                current_line -= 1;
+                start -= line_widths[current_line] as usize;
+            }
+        }
+    }
+    pub fn current_line(&self) -> Option<usize> {
+        match self.position {
+            LineCursorPosition::Valid { current_line, .. } => Some(current_line),
+            LineCursorPosition::Start | LineCursorPosition::End => None,
+        }
     }
 }
 
-fn escaped_lines<'a>(str: &'a str, width: u16) -> LineCursor<'a> {
-    LineCursor {
-        width,
-        start: 0,
-        line_widths: Vec::new(),
-        current_line: 0,
-        str,
-        done: false,
+fn take_width(s: &str, target_width: u16) -> (&str, u16) {
+    let mut width = 0u16;
+    for (i, c) in s.char_indices() {
+        let new_width = width + display_width(c) as u16;
+        if new_width > target_width {
+            let raw = &s[..i];
+            return (&s[..i], width);
+        }
+        width = new_width;
     }
+    (s, width)
 }
 
 #[cfg(feature = "dev-tools")]
