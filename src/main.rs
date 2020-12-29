@@ -18,7 +18,7 @@ use unicode_width::UnicodeWidthStr;
 #[cfg(feature = "dev-tools")]
 use cpuprofiler::PROFILER;
 use jed::{
-    cursor::{Cursor, FocusPosition},
+    cursor::{FocusPosition, ValueCursor},
     view_tree::{View, ViewFrame, ViewTree, ViewTreeIndex},
 };
 #[cfg(feature = "dev-tools")]
@@ -288,12 +288,12 @@ fn run(json_path: String) -> Result<(), io::Error> {
                 }
                 KeyCode::Home => {
                     view.cursor =
-                        Cursor::new(view.values.clone()).expect("values should still exist");
+                        ValueCursor::new(view.values.clone()).expect("values should still exist");
                     view.scroll = view.cursor.clone();
                 }
                 KeyCode::End => {
-                    view.cursor =
-                        Cursor::new_end(view.values.clone()).expect("values should still exist");
+                    view.cursor = ValueCursor::new_end(view.values.clone())
+                        .expect("values should still exist");
                     view.scroll = view.cursor.clone();
                     for _ in 0..line_limit - 1 {
                         view.scroll.regress(&view.folds);

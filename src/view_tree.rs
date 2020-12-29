@@ -1,5 +1,5 @@
 use crate::{
-    cursor::{Cursor, FocusPosition, LineCursor, Path},
+    cursor::{FocusPosition, GlobalCursor, Path, ValueCursor},
     jq::{
         jv::JV,
         query::{run_jq_query, JQ},
@@ -239,17 +239,17 @@ impl View {
 
 #[derive(Debug, Clone)]
 pub struct JsonView {
-    pub scroll: LineCursor,
+    pub scroll: GlobalCursor,
     pub values: Rc<[JV]>,
-    pub cursor: Cursor,
+    pub cursor: ValueCursor,
     pub folds: HashSet<(usize, Vec<usize>)>,
 }
 
 impl JsonView {
     pub fn new<V: Into<Rc<[JV]>>>(values: V) -> Option<Self> {
         let values: Rc<[JV]> = values.into();
-        let cursor = Cursor::new(values.clone())?;
-        let scroll = LineCursor::new(values.clone())?;
+        let cursor = ValueCursor::new(values.clone())?;
+        let scroll = GlobalCursor::new(values.clone())?;
         let folds = HashSet::new();
         Some(JsonView {
             scroll,
@@ -282,10 +282,10 @@ impl JsonView {
         rect: Rect,
     ) -> RangeInclusive<Path> {
         let mut scroll = self.scroll.clone();
-        let first = scroll.cursor.to_path();
+        let first = scroll.value_cursor.to_path();
         // For side effects! This could be more efficient...
         scroll.render_lines(Some(&self.cursor), folds, rect);
-        let last = scroll.cursor.to_path();
+        let last = scroll.value_cursor.to_path();
         first..=last
     }
     pub fn unfold_around_cursor(&mut self) {
@@ -304,9 +304,13 @@ impl JsonView {
             if let FocusPosition::End = self.cursor.focus_position {
                 self.cursor.focus_position = FocusPosition::Start;
             }
-            if self.scroll.cursor.descends_from_or_matches(&self.cursor) {
-                self.scroll = LineCursor {
-                    cursor: self.cursor.clone(),
+            if self
+                .scroll
+                .value_cursor
+                .descends_from_or_matches(&self.cursor)
+            {
+                self.scroll = GlobalCursor {
+                    value_cursor: self.cursor.clone(),
                     line_start: 0,
                 };
             }
@@ -318,7 +322,7 @@ impl JsonView {
 mod tests {
     use super::JsonView;
     use crate::{
-        cursor::{Cursor, LineCursor},
+        cursor::{GlobalCursor, ValueCursor},
         jq::jv::JV,
         testing::arb_json,
     };
@@ -361,9 +365,9 @@ mod tests {
             .collect::<Result<Vec<JV>, _>>()
             .unwrap();
         let mut view = JsonView::new(jsons).unwrap();
-        view.cursor = Cursor::new_end(view.values.clone()).unwrap();
-        view.scroll = LineCursor {
-            cursor: view.cursor.clone(),
+        view.cursor = ValueCursor::new_end(view.values.clone()).unwrap();
+        view.scroll = GlobalCursor {
+            value_cursor: view.cursor.clone(),
             line_start: 0,
         };
         let line_limit = 20;

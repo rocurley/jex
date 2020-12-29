@@ -239,7 +239,7 @@ impl<'a> StrLine<'a> {
     }
 }
 
-pub struct StrLineIter<'a> {
+pub struct LineCursor<'a> {
     pub width: u16,
     pub start: usize,      // bytes
     line_widths: Vec<u16>, //bytes
@@ -248,7 +248,7 @@ pub struct StrLineIter<'a> {
     pub done: bool,
 }
 
-impl<'a> StrLineIter<'a> {
+impl<'a> LineCursor<'a> {
     fn peek_from(&self, start: usize) -> Option<StrLine<'a>> {
         let is_start = start == 0;
         // open quote
@@ -290,7 +290,7 @@ fn take_width(s: &str, mut width: u16) -> (&str, u16) {
     (s, width)
 }
 
-impl<'a> Iterator for StrLineIter<'a> {
+impl<'a> Iterator for LineCursor<'a> {
     type Item = StrLine<'a>;
     fn next(&mut self) -> Option<Self::Item> {
         let next = self.peek_next()?;
@@ -306,8 +306,8 @@ impl<'a> Iterator for StrLineIter<'a> {
     }
 }
 
-fn escaped_lines<'a>(str: &'a str, width: u16) -> StrLineIter<'a> {
-    StrLineIter {
+fn escaped_lines<'a>(str: &'a str, width: u16) -> LineCursor<'a> {
+    LineCursor {
         width,
         start: 0,
         line_widths: Vec::new(),

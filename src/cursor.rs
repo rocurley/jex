@@ -1,6 +1,6 @@
 use crate::{
     jq::jv::{JVArray, JVObject, OwnedObjectIterator, JV},
-    lines::{Line, LineContent, StrLineIter},
+    lines::{Line, LineContent, LineCursor},
 };
 use regex::Regex;
 use std::{borrow::Cow, cmp::Ordering, collections::HashSet, fmt, rc::Rc};
@@ -273,38 +273,39 @@ impl CursorFrame {
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
-pub struct LineCursor {
-    pub cursor: Cursor,
+pub struct GlobalCursor {
+    pub value_cursor: ValueCursor,
     pub line_start: usize,
 }
-impl LineCursor {
+impl GlobalCursor {
     pub fn new(jsons: Rc<[JV]>) -> Option<Self> {
-        let cursor = Cursor::new(jsons)?;
-        Some(LineCursor {
-            cursor,
+        let cursor = ValueCursor::new(jsons)?;
+        Some(GlobalCursor {
+            value_cursor: cursor,
             line_start: 0,
         })
     }
     pub fn render_lines(
         &mut self,
-        cursor: Option<&Cursor>,
+        cursor: Option<&ValueCursor>,
         folds: &HashSet<(usize, Vec<usize>)>,
         rect: Rect,
     ) -> Vec<Spans<'static>> {
         let mut lines = Vec::with_capacity(rect.height as usize);
-        lines.append(&mut self.cursor.current_line(folds).render(
-            Some(&self.cursor) == cursor,
+        lines.append(&mut self.value_cursor.current_line(folds).render(
+            Some(&self.value_cursor) == cursor,
             rect.width,
             self.line_start,
         ));
         while lines.len() < rect.height as usize {
-            if self.cursor.advance(folds).is_none() {
+            if self.value_cursor.advance(folds).is_none() {
                 break;
             }
-            let new_lines =
-                self.cursor
-                    .current_line(folds)
-                    .render(Some(&self.cursor) == cursor, rect.width, 0);
+            let new_lines = self.value_cursor.current_line(folds).render(
+                Some(&self.value_cursor) == cursor,
+                rect.width,
+                0,
+            );
             lines.extend(
                 new_lines
                     .into_iter()
@@ -314,10 +315,10 @@ impl LineCursor {
         lines
     }
     pub fn advance(&mut self, folds: &HashSet<(usize, Vec<usize>)>, rect: Rect) -> Option<()> {
-        let line = self.cursor.current_line(folds);
+        let line = self.value_cursor.current_line(folds);
         if let LineContent::String(str) = line.content {
             let content_width = line.content_width(rect.width);
-            let next_line = StrLineIter {
+            let next_line = LineCursor {
                 width: content_width,
                 start: self.line_start,
                 str,
@@ -329,16 +330,16 @@ impl LineCursor {
                     self.line_start = next_line.start;
                     Some(())
                 }
-                None => self.cursor.advance(folds),
+                None => self.value_cursor.advance(folds),
             }
         } else {
-            self.cursor.advance(folds)
+            self.value_cursor.advance(folds)
         }
     }
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
-pub struct Cursor {
+pub struct ValueCursor {
     // Top level jsons of the view
     pub jsons: Rc<[JV]>,
     // Index locating the json this cursor is focused (somewhere) on
@@ -353,11 +354,11 @@ pub struct Cursor {
     pub focus_position: FocusPosition,
 }
 
-impl Cursor {
+impl ValueCursor {
     pub fn new(jsons: Rc<[JV]>) -> Option<Self> {
         let focus = jsons.first()?.clone();
         let focus_position = FocusPosition::starting(&focus);
-        Some(Cursor {
+        Some(ValueCursor {
             jsons,
             top_index: 0,
             frames: Vec::new(),
@@ -369,7 +370,7 @@ impl Cursor {
         let top_index = jsons.len() - 1;
         let focus = jsons.last()?.clone();
         let focus_position = FocusPosition::ending(&focus);
-        Some(Cursor {
+        Some(ValueCursor {
             jsons,
             top_index,
             frames: Vec::new(),
@@ -413,7 +414,7 @@ impl Cursor {
                 _ => panic!("Shape of path does not match shape of jsons"),
             }
         }
-        Cursor {
+        ValueCursor {
             jsons,
             top_index: path.top_index,
             frames,
@@ -569,7 +570,7 @@ impl Cursor {
                 return Some(self);
             }
         }
-        let mut cursor = Cursor::new(self.jsons).expect("Jsons can't be empty here");
+        let mut cursor = ValueCursor::new(self.jsons).expect("Jsons can't be empty here");
         while !cursor.matches_path(&start) {
             if cursor.regex_matches(re) {
                 return Some(cursor);
@@ -588,7 +589,7 @@ impl Cursor {
                 return Some(self);
             }
         }
-        let mut cursor = Cursor::new_end(self.jsons).expect("Jsons can't be empty here");
+        let mut cursor = ValueCursor::new_end(self.jsons).expect("Jsons can't be empty here");
         while !cursor.matches_path(&start) {
             if cursor.regex_matches(re) {
                 return Some(cursor);
@@ -671,7 +672,7 @@ impl Ord for Path {
 
 #[cfg(test)]
 mod tests {
-    use super::Cursor;
+    use super::ValueCursor;
     use crate::{
         jq::jv::JV,
         testing::{arb_json, json_to_lines},
@@ -684,7 +685,7 @@ mod tests {
     fn check_advancing_terminates(jsons: Vec<Value>) {
         let jsons: Vec<JV> = jsons.iter().map(|v| v.into()).collect();
         let folds = HashSet::new();
-        if let Some(mut cursor) = Cursor::new(jsons.into()) {
+        if let Some(mut cursor) = ValueCursor::new(jsons.into()) {
             let mut last_path = cursor.to_path();
             while let Some(()) = cursor.advance(&folds) {
                 let path = cursor.to_path();
@@ -703,7 +704,7 @@ mod tests {
             let jsons : Vec<JV> = values.iter().map(|v| v.into()).collect();
             let folds = HashSet::new();
             let mut expected_lines = json_to_lines(values.iter()).into_iter();
-            if let Some(mut cursor) = Cursor::new(jsons.into()) {
+            if let Some(mut cursor) = ValueCursor::new(jsons.into()) {
                 let mut actual_lines = Vec::new();
                 actual_lines.push(cursor.current_line(&folds));
                 assert_eq!(cursor.current_line(&folds), expected_lines.next().expect("Expected lines shorter than actual lines"));
@@ -714,9 +715,9 @@ mod tests {
             assert!(expected_lines.next().is_none());
         }
     }
-    fn check_path_roundtrip(cursor: &Cursor, jsons: Rc<[JV]>) {
+    fn check_path_roundtrip(cursor: &ValueCursor, jsons: Rc<[JV]>) {
         let path = cursor.to_path();
-        let new_cursor = Cursor::from_path(jsons, &path);
+        let new_cursor = ValueCursor::from_path(jsons, &path);
         assert_eq!(*cursor, new_cursor);
     }
     proptest! {
@@ -725,7 +726,7 @@ mod tests {
             let jsons : Vec<JV> = values.iter().map(|v| v.into()).collect();
             let jsons : Rc<[JV]> = jsons.into();
             let folds = HashSet::new();
-            if let Some(mut cursor) = Cursor::new(jsons.clone()) {
+            if let Some(mut cursor) = ValueCursor::new(jsons.clone()) {
                 check_path_roundtrip(&cursor, jsons.clone());
                 while let Some(()) = cursor.advance(&folds) {
                     check_path_roundtrip(&cursor, jsons.clone());
@@ -733,8 +734,8 @@ mod tests {
             }
         }
     }
-    fn check_advance_regress(cursor: &Cursor, folds: &HashSet<(usize, Vec<usize>)>) {
-        let mut actual: Cursor = cursor.clone();
+    fn check_advance_regress(cursor: &ValueCursor, folds: &HashSet<(usize, Vec<usize>)>) {
+        let mut actual: ValueCursor = cursor.clone();
         if actual.advance(folds).is_none() {
             return;
         }
@@ -747,7 +748,7 @@ mod tests {
             let jsons : Vec<JV> = values.iter().map(|v| v.into()).collect();
             let jsons : Rc<[JV]> = jsons.into();
             let folds = HashSet::new();
-            if let Some(mut cursor) = Cursor::new(jsons.clone()) {
+            if let Some(mut cursor) = ValueCursor::new(jsons.clone()) {
                 check_advance_regress(&cursor, &folds);
                 while let Some(()) = cursor.advance(&folds) {
                     check_advance_regress(&cursor, &folds);
@@ -761,7 +762,7 @@ mod tests {
             let jsons : Vec<JV> = values.iter().map(|v| v.into()).collect();
             let jsons : Rc<[JV]> = jsons.into();
             let folds = HashSet::new();
-            if let Some(mut cursor) = Cursor::new(jsons) {
+            if let Some(mut cursor) = ValueCursor::new(jsons) {
                 let mut prior_path = cursor.to_path();
                 while let Some(()) = cursor.advance(&folds) {
                     let new_path = cursor.to_path();
