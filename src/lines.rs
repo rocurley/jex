@@ -1,5 +1,5 @@
 use crate::jq::jv::JVString;
-use std::{cell::RefCell, io::Write};
+use std::{cell::RefCell, io::Write, rc::Rc};
 use tui::{
     style::{Color, Modifier, Style},
     text::{Span, Spans},
@@ -11,7 +11,7 @@ use unicode_width::UnicodeWidthChar;
 pub struct Line<'a> {
     pub content: LineContent<'a>,
     pub key: Option<&'a str>,
-    pub indent: u8,
+    pub indent: u16,
     pub comma: bool,
 }
 
@@ -20,7 +20,7 @@ pub enum LineContent<'a> {
     Null,
     Bool(bool),
     Number(f64),
-    String(&'a str),
+    String(StrLine<'a>),
     FoldedArray(usize),
     ArrayStart,
     ArrayEnd,
@@ -32,28 +32,8 @@ pub enum LineContent<'a> {
 use std::fmt::Debug;
 impl<'a> Line<'a> {
     // TODO: something less hilariously inefficient
-    pub fn content_width(&self, width: u16) -> u16 {
-        let indent_span = Span::raw("  ".repeat(self.indent as usize));
-        let mut out = match &self.key {
-            Some(key) => vec![
-                indent_span,
-                Span::raw(format!("\"{}\"", escaped_str(key))),
-                Span::raw(" : "),
-            ],
-            _ => vec![indent_span],
-        };
-        let consumed_width: u16 = out.iter().map(|span| span.width() as u16).sum();
-        let remainining_width = width.saturating_sub(consumed_width);
-        remainining_width
-    }
     // TODO: wrapping for non-strings (keys???)
-    // TODO: Max line count (we don't get any efficiency gain until we have this!)
-    pub fn render(
-        self,
-        is_cursor: bool,
-        width: u16,
-        line_cursor: Option<LineCursor>,
-    ) -> Vec<Spans<'static>> {
+    pub fn render(self, is_cursor: bool, width: u16) -> Spans<'static> {
         let indent_span = Span::raw("  ".repeat(self.indent as usize));
         let mut out = match &self.key {
             Some(key) => vec![
@@ -75,36 +55,23 @@ impl<'a> Line<'a> {
                     out.push(Span::raw(","));
                 }
             }
-            LineContent::String(_) => {
-                let mut line_cursor =
-                    line_cursor.expect("line_cursor is mandatory when passed a string");
-                let consumed_width: u16 = out.iter().map(|span| span.width() as u16).sum();
-                let remainining_width = width.saturating_sub(consumed_width);
-                // TODO: rename this or the other one, it's confusing
-                let mut out = if line_cursor.current_line().unwrap() == 0 {
-                    let escaped_line = line_cursor.current().unwrap().to_string();
-                    line_cursor.move_next();
-                    out.push(Span::styled(escaped_line, style));
-                    vec![Spans::from(out)]
-                } else {
-                    Vec::new()
+            LineContent::String(StrLine {
+                raw,
+                is_start,
+                is_end,
+                ..
+            }) => {
+                let quoted = match (is_start, is_end) {
+                    (false, false) => raw.to_string(),
+                    (true, false) => format!("\"{}", raw),
+                    (false, true) => format!("{}\"", raw),
+                    (true, true) => format!("\"{}\"", raw),
                 };
-                while let Some(escaped_line) = line_cursor.current() {
-                    let padding = Span::raw(" ".repeat(consumed_width as usize));
-                    out.push(Spans::from(vec![
-                        padding,
-                        Span::styled(escaped_line.to_string(), style),
-                    ]));
-                    line_cursor.move_next();
-                }
+                out.push(Span::styled(quoted, style));
                 if self.comma {
                     // TODO: check if the comma will fit
-                    out.last_mut()
-                        .expect("out cannot be empty")
-                        .0
-                        .push(Span::raw(","));
+                    out.push(Span::raw(","));
                 }
-                return out;
             }
             LineContent::Bool(b) => {
                 out.push(Span::styled(b.to_string(), style));
@@ -157,7 +124,7 @@ impl<'a> Line<'a> {
                 }
             }
         };
-        vec![Spans::from(out)]
+        Spans::from(out)
     }
 }
 
@@ -178,7 +145,7 @@ fn is_unicode_escaped(c: char) -> bool {
     }
 }
 
-fn escaped_str(s: &str) -> String {
+pub fn escaped_str(s: &str) -> String {
     let mut escaped_raw = Vec::new();
     write_escaped_str(s, &mut escaped_raw).expect("Writing to a vector should be infaliable");
     String::from_utf8(escaped_raw).expect("Escaped string was not utf-8")
@@ -221,6 +188,7 @@ fn display_width(c: char) -> u8 {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct StrLine<'a> {
     pub is_start: bool,
     pub is_end: bool,
@@ -242,6 +210,7 @@ impl<'a> StrLine<'a> {
     }
 }
 
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
 enum LineCursorPosition {
     Start,
     End,
@@ -251,9 +220,10 @@ enum LineCursorPosition {
     },
 }
 
+#[derive(PartialEq, Eq, Debug, Clone)]
 pub struct LineCursor {
     width: u16,
-    line_widths: RefCell<Vec<u16>>, //bytes
+    line_widths: Rc<RefCell<Vec<u16>>>, //bytes
     position: LineCursorPosition,
     value: JVString,
 }
@@ -292,12 +262,16 @@ impl LineCursor {
         };
     }
     pub fn move_next(&mut self) {
-        let line_widths = self.line_widths.borrow_mut();
-        match self.position {
+        let mut line_widths = self.line_widths.borrow_mut();
+        match &mut self.position {
             LineCursorPosition::Start => {
                 if line_widths.is_empty() {
                     // width - 1 for the opening quote
-                    Self::extend_line_widths(&mut line_widths, self.value.value(), self.width - 1);
+                    Self::extend_line_widths(
+                        line_widths.as_mut(),
+                        self.value.value(),
+                        self.width - 1,
+                    );
                 }
                 self.position = LineCursorPosition::Valid {
                     current_line: 0,
@@ -309,11 +283,11 @@ impl LineCursor {
                 current_line,
                 start,
             } => {
-                start += line_widths[current_line] as usize;
-                current_line += 1;
-                if current_line == line_widths.len() {
+                *start += line_widths[*current_line] as usize;
+                *current_line += 1;
+                if *current_line == line_widths.len() {
                     let s = self.value.value();
-                    if start == s.len() {
+                    if *start == s.len() {
                         self.position = LineCursorPosition::End;
                     } else {
                         Self::extend_line_widths(&mut line_widths, s, self.width);
@@ -324,18 +298,18 @@ impl LineCursor {
     }
     pub fn move_prev(&mut self) {
         let line_widths = self.line_widths.borrow_mut();
-        match self.position {
+        match &mut self.position {
             LineCursorPosition::Start => {}
             LineCursorPosition::End => {}
-            LineCursorPosition::Valid { current_line, .. } if current_line == 0 => {
+            LineCursorPosition::Valid { current_line, .. } if *current_line == 0 => {
                 self.position = LineCursorPosition::Start
             }
             LineCursorPosition::Valid {
                 current_line,
                 start,
             } => {
-                current_line -= 1;
-                start -= line_widths[current_line] as usize;
+                *current_line -= 1;
+                *start -= line_widths[*current_line] as usize;
             }
         }
     }
@@ -344,6 +318,28 @@ impl LineCursor {
             LineCursorPosition::Valid { current_line, .. } => Some(current_line),
             LineCursorPosition::Start | LineCursorPosition::End => None,
         }
+    }
+    pub fn new_at_start(value: JVString, width: u16) -> Self {
+        let mut out = LineCursor {
+            line_widths: Rc::new(RefCell::new(Vec::new())),
+            position: LineCursorPosition::Start,
+            value,
+            width,
+        };
+        out.move_next();
+        out
+    }
+    pub fn new_at_end(value: JVString, width: u16) -> Self {
+        // We start from the start and scan forward to populate line_widths
+        let mut out = Self::new_at_start(value, width);
+        while out.position != LineCursorPosition::End {
+            out.move_next();
+        }
+        out.move_prev();
+        out
+    }
+    pub fn set_width(&mut self, width: u16) {
+        assert_eq!(self.width, width);
     }
 }
 

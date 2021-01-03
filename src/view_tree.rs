@@ -27,11 +27,11 @@ pub struct ViewFrame {
 }
 
 impl ViewTree {
-    pub fn new_from_reader<R: io::Read>(r: R, name: String) -> io::Result<Self> {
+    pub fn new_from_reader<R: io::Read>(r: R, name: String, width: u16) -> io::Result<Self> {
         let content: Vec<JV> = Deserializer::from_reader(r)
             .into_iter::<JV>()
             .collect::<Result<Vec<JV>, _>>()?;
-        let view = View::new(content);
+        let view = View::new(content, width);
         let view_frame = ViewFrame { view, name };
         let mut tree = ViewTree {
             view_frame,
@@ -44,7 +44,7 @@ impl ViewTree {
         if let View::Json(Some(view)) = &self.view_frame.view {
             let name = "New Query".into();
             let view_frame = ViewFrame {
-                view: View::new(view.values.clone()),
+                view: View::new(view.values.clone(), view.width),
                 name,
             };
             let child = ViewTree {
@@ -216,8 +216,8 @@ pub enum View {
 }
 
 impl View {
-    pub fn new<V: Into<Rc<[JV]>>>(values: V) -> Self {
-        View::Json(JsonView::new(values))
+    pub fn new<V: Into<Rc<[JV]>>>(values: V, width: u16) -> Self {
+        View::Json(JsonView::new(values, width))
     }
     pub fn render(&self, rect: Rect, has_focus: bool) -> Paragraph {
         match self {
@@ -243,19 +243,21 @@ pub struct JsonView {
     pub values: Rc<[JV]>,
     pub cursor: ValueCursor,
     pub folds: HashSet<(usize, Vec<usize>)>,
+    pub width: u16,
 }
 
 impl JsonView {
-    pub fn new<V: Into<Rc<[JV]>>>(values: V) -> Option<Self> {
+    pub fn new<V: Into<Rc<[JV]>>>(values: V, width: u16) -> Option<Self> {
         let values: Rc<[JV]> = values.into();
         let cursor = ValueCursor::new(values.clone())?;
-        let scroll = GlobalCursor::new(values.clone())?;
+        let scroll = GlobalCursor::new(values.clone(), width)?;
         let folds = HashSet::new();
         Some(JsonView {
             scroll,
             values,
             cursor,
             folds,
+            width,
         })
     }
     fn render(&self, rect: Rect, has_focus: bool) -> Paragraph {
@@ -270,7 +272,7 @@ impl JsonView {
     pub fn apply_query(&self, query: &str) -> View {
         match JQ::compile(query) {
             Ok(mut prog) => match run_jq_query(self.values.iter(), &mut prog) {
-                Ok(results) => View::Json(JsonView::new(results)),
+                Ok(results) => View::Json(JsonView::new(results, self.width)),
                 Err(err) => View::Error(vec![err]),
             },
             Err(err) => View::Error(err),
@@ -311,7 +313,8 @@ impl JsonView {
             {
                 self.scroll = GlobalCursor {
                     value_cursor: self.cursor.clone(),
-                    line_start: 0,
+                    // Note: this is okay because you can only fold objects and arrays
+                    line_cursor: None,
                 };
             }
         }

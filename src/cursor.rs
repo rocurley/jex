@@ -1,10 +1,13 @@
 use crate::{
     jq::jv::{JVArray, JVObject, OwnedObjectIterator, JV},
-    lines::{Line, LineContent, LineCursor},
+    lines::{escaped_str, Line, LineContent, LineCursor},
 };
 use regex::Regex;
 use std::{borrow::Cow, cmp::Ordering, collections::HashSet, fmt, rc::Rc};
-use tui::{layout::Rect, text::Spans};
+use tui::{
+    layout::Rect,
+    text::{Span, Spans},
+};
 
 // Requirements:
 // * Produce the current line
@@ -275,15 +278,25 @@ impl CursorFrame {
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub struct GlobalCursor {
     pub value_cursor: ValueCursor,
-    pub line_start: usize,
+    pub line_cursor: Option<LineCursor>,
 }
 impl GlobalCursor {
-    pub fn new(jsons: Rc<[JV]>) -> Option<Self> {
+    pub fn new(jsons: Rc<[JV]>, width: u16) -> Option<Self> {
         let cursor = ValueCursor::new(jsons)?;
+        let line_cursor = match &cursor.focus {
+            // Note that this is only valid because a top-level string renders across the entire
+            // rect, so rect width is equal to the line width
+            &JV::String(ref s) => Some(LineCursor::new_at_start(s.clone(), width)),
+            _ => None,
+        };
         Some(GlobalCursor {
             value_cursor: cursor,
-            line_start: 0,
+            line_cursor,
         })
+    }
+    pub fn current_line(&self, folds: &HashSet<(usize, Vec<usize>)>) -> Line {
+        self.value_cursor
+            .current_line(folds, self.line_cursor.as_ref())
     }
     pub fn render_lines(
         &mut self,
@@ -292,49 +305,37 @@ impl GlobalCursor {
         rect: Rect,
     ) -> Vec<Spans<'static>> {
         let mut lines = Vec::with_capacity(rect.height as usize);
-        lines.append(&mut self.value_cursor.current_line(folds).render(
-            Some(&self.value_cursor) == cursor,
-            rect.width,
-            self.line_start,
-        ));
+        if let Some(c) = self.line_cursor.as_mut() {
+            c.set_width(rect.width);
+        }
+        lines.push(
+            self.current_line(folds)
+                .render(Some(&self.value_cursor) == cursor, rect.width),
+        );
         while lines.len() < rect.height as usize {
-            if self.value_cursor.advance(folds).is_none() {
+            if let None = self.advance(folds, rect) {
                 break;
-            }
-            let new_lines = self.value_cursor.current_line(folds).render(
-                Some(&self.value_cursor) == cursor,
-                rect.width,
-                0,
-            );
-            lines.extend(
-                new_lines
-                    .into_iter()
-                    .take(rect.height as usize - lines.len()),
+            };
+            lines.push(
+                self.current_line(folds)
+                    .render(Some(&self.value_cursor) == cursor, rect.width),
             );
         }
         lines
     }
     pub fn advance(&mut self, folds: &HashSet<(usize, Vec<usize>)>, rect: Rect) -> Option<()> {
-        let line = self.value_cursor.current_line(folds);
-        if let LineContent::String(str) = line.content {
-            let content_width = line.content_width(rect.width);
-            let next_line = LineCursor {
-                width: content_width,
-                start: self.line_start,
-                str,
-                done: false,
+        if let Some(lc) = self.line_cursor.as_mut() {
+            lc.move_next();
+            if lc.current().is_some() {
+                return Some(());
             }
-            .peek_next();
-            match next_line {
-                Some(next_line) => {
-                    self.line_start = next_line.start;
-                    Some(())
-                }
-                None => self.value_cursor.advance(folds),
-            }
-        } else {
-            self.value_cursor.advance(folds)
         }
+        self.value_cursor.advance(folds)?;
+        if let JV::String(ref value) = &self.value_cursor.focus {
+            let width = self.value_cursor.content_width(rect.width);
+            self.line_cursor = Some(LineCursor::new_at_start(value.clone(), width));
+        }
+        Some(())
     }
 }
 
@@ -422,7 +423,40 @@ impl ValueCursor {
             focus_position: path.focus_position,
         }
     }
-    pub fn current_line(&self, folds: &HashSet<(usize, Vec<usize>)>) -> Line {
+    pub fn current_key(&self) -> Option<&str> {
+        match self.focus_position {
+            FocusPosition::End => None,
+            _ => match self.frames.last() {
+                None => None,
+                Some(CursorFrame::Array { .. }) => None,
+                Some(CursorFrame::Object { key, .. }) => Some(key),
+            },
+        }
+    }
+    pub fn current_indent(&self) -> u16 {
+        (self.frames.len() * 2) as u16
+    }
+    pub fn content_width(&self, width: u16) -> u16 {
+        let key = self.current_key();
+        let indent = self.current_indent();
+        let indent_span = Span::raw(" ".repeat(indent as usize));
+        let out = match key {
+            Some(key) => vec![
+                indent_span,
+                Span::raw(format!("\"{}\"", escaped_str(key))),
+                Span::raw(" : "),
+            ],
+            _ => vec![indent_span],
+        };
+        let consumed_width: u16 = out.iter().map(|span| span.width() as u16).sum();
+        let remainining_width = width.saturating_sub(consumed_width);
+        remainining_width
+    }
+    pub fn current_line<'a>(
+        &'a self,
+        folds: &HashSet<(usize, Vec<usize>)>,
+        line_cursor: Option<&'a LineCursor>,
+    ) -> Line<'a> {
         use FocusPosition::*;
         let folded = folds.contains(&self.to_path().strip_position());
         let content = match (&self.focus, self.focus_position, folded) {
@@ -435,17 +469,17 @@ impl ValueCursor {
             (JV::Null(_), Value, _) => LineContent::Null,
             (JV::Bool(b), Value, _) => LineContent::Bool(b.value()),
             (JV::Number(x), Value, _) => LineContent::Number(x.value()),
-            (JV::String(s), Value, _) => LineContent::String(s.value().into()),
+            (JV::String(_), Value, _) => {
+                // TODO: this is bad for many reasons. Ideally in the future every type will use
+                // LineCursor (since keys could be very long, for example). But at the very least,
+                // we should make it so LineCursor and ValueCursor have the same semantics about
+                // moving: either they should both refuse to move off the edge, or both should
+                // allow it.
+                LineContent::String(line_cursor.unwrap().current().unwrap())
+            }
             triple => panic!("Illegal json/focus_position/folded triple: {:?}", triple),
         };
-        let key = match self.focus_position {
-            FocusPosition::End => None,
-            _ => match self.frames.last() {
-                None => None,
-                Some(CursorFrame::Array { .. }) => None,
-                Some(CursorFrame::Object { key, .. }) => Some(key.as_str()),
-            },
-        };
+        let key = self.current_key();
         let comma = match self.focus_position {
             FocusPosition::Start => false,
             _ => match self.frames.last() {
@@ -454,7 +488,7 @@ impl ValueCursor {
                 Some(CursorFrame::Object { iterator, .. }) => iterator.len() != 0,
             },
         };
-        let indent = self.frames.len() as u8;
+        let indent = self.current_indent();
         Line {
             content,
             key,
