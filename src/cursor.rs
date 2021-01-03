@@ -294,6 +294,19 @@ impl GlobalCursor {
             line_cursor,
         })
     }
+    pub fn new_end(jsons: Rc<[JV]>, width: u16) -> Option<Self> {
+        let cursor = ValueCursor::new_end(jsons)?;
+        let line_cursor = match &cursor.focus {
+            // Note that this is only valid because a top-level string renders across the entire
+            // rect, so rect width is equal to the line width
+            &JV::String(ref s) => Some(LineCursor::new_at_end(s.clone(), width)),
+            _ => None,
+        };
+        Some(GlobalCursor {
+            value_cursor: cursor,
+            line_cursor,
+        })
+    }
     pub fn current_line(&self, folds: &HashSet<(usize, Vec<usize>)>) -> Line {
         self.value_cursor
             .current_line(folds, self.line_cursor.as_ref())
@@ -334,6 +347,20 @@ impl GlobalCursor {
         if let JV::String(ref value) = &self.value_cursor.focus {
             let width = self.value_cursor.content_width(rect.width);
             self.line_cursor = Some(LineCursor::new_at_start(value.clone(), width));
+        }
+        Some(())
+    }
+    pub fn regress(&mut self, folds: &HashSet<(usize, Vec<usize>)>, rect: Rect) -> Option<()> {
+        if let Some(lc) = self.line_cursor.as_mut() {
+            lc.move_prev();
+            if lc.current().is_some() {
+                return Some(());
+            }
+        }
+        self.value_cursor.regress(folds)?;
+        if let JV::String(ref value) = &self.value_cursor.focus {
+            let width = self.value_cursor.content_width(rect.width);
+            self.line_cursor = Some(LineCursor::new_at_end(value.clone(), width));
         }
         Some(())
     }

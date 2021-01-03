@@ -4,6 +4,7 @@ use crate::{
         jv::JV,
         query::{run_jq_query, JQ},
     },
+    layout::JedLayout,
 };
 use serde_json::Deserializer;
 use std::{collections::HashSet, io, ops::RangeInclusive, rc::Rc};
@@ -27,24 +28,24 @@ pub struct ViewFrame {
 }
 
 impl ViewTree {
-    pub fn new_from_reader<R: io::Read>(r: R, name: String, width: u16) -> io::Result<Self> {
+    pub fn new_from_reader<R: io::Read>(r: R, name: String, layout: JedLayout) -> io::Result<Self> {
         let content: Vec<JV> = Deserializer::from_reader(r)
             .into_iter::<JV>()
             .collect::<Result<Vec<JV>, _>>()?;
-        let view = View::new(content, width);
+        let view = View::new(content, layout.left);
         let view_frame = ViewFrame { view, name };
         let mut tree = ViewTree {
             view_frame,
             children: Vec::new(),
         };
-        tree.push_trivial_child();
+        tree.push_trivial_child(layout.right);
         Ok(tree)
     }
-    pub fn push_trivial_child(&mut self) {
+    pub fn push_trivial_child(&mut self, target_rect: Rect) {
         if let View::Json(Some(view)) = &self.view_frame.view {
             let name = "New Query".into();
             let view_frame = ViewFrame {
-                view: View::new(view.values.clone(), view.width),
+                view: View::new(view.values.clone(), target_rect),
                 name,
             };
             let child = ViewTree {
@@ -216,8 +217,8 @@ pub enum View {
 }
 
 impl View {
-    pub fn new<V: Into<Rc<[JV]>>>(values: V, width: u16) -> Self {
-        View::Json(JsonView::new(values, width))
+    pub fn new<V: Into<Rc<[JV]>>>(values: V, rect: Rect) -> Self {
+        View::Json(JsonView::new(values, rect))
     }
     pub fn render(&self, rect: Rect, has_focus: bool) -> Paragraph {
         match self {
@@ -243,21 +244,21 @@ pub struct JsonView {
     pub values: Rc<[JV]>,
     pub cursor: ValueCursor,
     pub folds: HashSet<(usize, Vec<usize>)>,
-    pub width: u16,
+    pub rect: Rect,
 }
 
 impl JsonView {
-    pub fn new<V: Into<Rc<[JV]>>>(values: V, width: u16) -> Option<Self> {
+    pub fn new<V: Into<Rc<[JV]>>>(values: V, rect: Rect) -> Option<Self> {
         let values: Rc<[JV]> = values.into();
         let cursor = ValueCursor::new(values.clone())?;
-        let scroll = GlobalCursor::new(values.clone(), width)?;
+        let scroll = GlobalCursor::new(values.clone(), rect.width)?;
         let folds = HashSet::new();
         Some(JsonView {
             scroll,
             values,
             cursor,
             folds,
-            width,
+            rect,
         })
     }
     fn render(&self, rect: Rect, has_focus: bool) -> Paragraph {
@@ -269,24 +270,20 @@ impl JsonView {
             .alignment(Alignment::Left)
         //.wrap(Wrap { trim: false })
     }
-    pub fn apply_query(&self, query: &str) -> View {
+    pub fn apply_query(&self, query: &str, target_rect: Rect) -> View {
         match JQ::compile(query) {
             Ok(mut prog) => match run_jq_query(self.values.iter(), &mut prog) {
-                Ok(results) => View::Json(JsonView::new(results, self.width)),
+                Ok(results) => View::Json(JsonView::new(results, target_rect)),
                 Err(err) => View::Error(vec![err]),
             },
             Err(err) => View::Error(err),
         }
     }
-    pub fn visible_range(
-        &self,
-        folds: &HashSet<(usize, Vec<usize>)>,
-        rect: Rect,
-    ) -> RangeInclusive<Path> {
+    pub fn visible_range(&self, folds: &HashSet<(usize, Vec<usize>)>) -> RangeInclusive<Path> {
         let mut scroll = self.scroll.clone();
         let first = scroll.value_cursor.to_path();
         // For side effects! This could be more efficient...
-        scroll.render_lines(Some(&self.cursor), folds, rect);
+        scroll.render_lines(Some(&self.cursor), folds, self.rect);
         let last = scroll.value_cursor.to_path();
         first..=last
     }

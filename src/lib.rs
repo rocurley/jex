@@ -1,5 +1,6 @@
 pub mod cursor;
 pub mod jq;
+pub mod layout;
 mod lines;
 #[cfg(test)]
 mod testing;

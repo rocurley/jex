@@ -9,7 +9,7 @@ use regex::Regex;
 use std::{fs, io, io::Write, panic};
 use tui::{
     backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Rect},
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame, Terminal,
 };
@@ -18,7 +18,8 @@ use unicode_width::UnicodeWidthStr;
 #[cfg(feature = "dev-tools")]
 use cpuprofiler::PROFILER;
 use jed::{
-    cursor::{FocusPosition, ValueCursor},
+    cursor::GlobalCursor,
+    layout::JedLayout,
     view_tree::{View, ViewFrame, ViewTree, ViewTreeIndex},
 };
 #[cfg(feature = "dev-tools")]
@@ -155,10 +156,11 @@ fn run(json_path: String) -> Result<(), io::Error> {
     }));
     let f = fs::File::open(&json_path)?;
     let r = io::BufReader::new(f);
-    let mut app = App::new(r, json_path)?;
     let stdout = io::stdout();
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
+    let initial_layout = JedLayout::new(&terminal.get_frame(), false);
+    let mut app = App::new(r, json_path, initial_layout)?;
     terminal.draw(app.render(AppRenderMode::Normal))?;
     let mut query_rl: rustyline::Editor<()> = rustyline::Editor::new();
     let mut search_rl: rustyline::Editor<()> = rustyline::Editor::new();
@@ -167,6 +169,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
     search_rl.bind_sequence(rustyline::KeyPress::Esc, rustyline::Cmd::Interrupt);
     title_rl.bind_sequence(rustyline::KeyPress::Esc, rustyline::Cmd::Interrupt);
     loop {
+        let layout = JedLayout::new(&terminal.get_frame(), app.show_tree);
         let event = event::read().expect("Error getting next event");
         let c = match event {
             event::Event::Key(c) => c,
@@ -188,31 +191,23 @@ fn run(json_path: String) -> Result<(), io::Error> {
                         *query = new_query;
                         // Just in case rustyline messed stuff up
                         force_draw(&mut terminal, app.render(AppRenderMode::Normal))?;
-                        app.recompute_right();
+                        app.recompute_right(layout.right);
                     }
                     Err(_) => {}
                 }
             }
             KeyCode::Char('\t') => app.focus = app.focus.swap(),
-            KeyCode::Char('+') => match app.focus {
-                Focus::Left => {
-                    let tree = app
-                        .views
-                        .index_tree_mut(&app.index.parent)
-                        .expect("App index invalidated");
-                    app.index.child = tree.children.len();
-                    tree.push_trivial_child();
-                }
-                Focus::Right => {
+            KeyCode::Char('+') => {
+                if let Focus::Right = app.focus {
                     app.index.parent.push(app.index.child);
-                    let tree = app
-                        .views
-                        .index_tree_mut(&app.index.parent)
-                        .expect("App index invalidated");
-                    app.index.child = tree.children.len();
-                    tree.push_trivial_child();
-                }
-            },
+                };
+                let tree = app
+                    .views
+                    .index_tree_mut(&app.index.parent)
+                    .expect("App index invalidated");
+                app.index.child = tree.children.len();
+                tree.push_trivial_child(layout.right);
+            }
             KeyCode::Char('j') => {
                 app.index.advance(&app.views);
             }
@@ -232,7 +227,6 @@ fn run(json_path: String) -> Result<(), io::Error> {
             }
             _ => {}
         }
-        let layout = JedLayout::new(&terminal.get_frame(), app.show_tree);
         let view_rect = match app.focus {
             Focus::Left => layout.left,
             Focus::Right => layout.right,
@@ -250,7 +244,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
                 KeyCode::Down => {
                     view.cursor.advance(&view.folds);
                     if !view
-                        .visible_range(&view.folds, json_frame)
+                        .visible_range(&view.folds)
                         .contains(&view.cursor.to_path())
                     {
                         view.scroll.advance(&view.folds, view_rect);
@@ -259,7 +253,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
                 KeyCode::Up => {
                     view.cursor.regress(&view.folds);
                     if !view
-                        .visible_range(&view.folds, json_frame)
+                        .visible_range(&view.folds)
                         .contains(&view.cursor.to_path())
                     {
                         view.scroll.regress(&view.folds, view_rect);
@@ -275,29 +269,26 @@ fn run(json_path: String) -> Result<(), io::Error> {
                             // Just in case rustyline messed stuff up
                             force_draw(&mut terminal, app.render(AppRenderMode::Normal))?;
                             app.search_re = Regex::new(new_search.as_ref()).ok();
-                            app.search(line_limit, false);
+                            app.search(false);
                         }
                         Err(_) => {}
                     }
                 }
                 KeyCode::Char('n') => {
-                    app.search(line_limit, false);
+                    app.search(false);
                 }
                 KeyCode::Char('N') => {
-                    app.search(line_limit, true);
+                    app.search(true);
                 }
                 KeyCode::Home => {
-                    view.cursor =
-                        ValueCursor::new(view.values.clone()).expect("values should still exist");
-                    view.scroll = view.cursor.clone();
+                    view.scroll = GlobalCursor::new(view.values.clone(), view.rect.width)
+                        .expect("values should still exist");
+                    view.cursor = view.scroll.value_cursor.clone();
                 }
                 KeyCode::End => {
-                    view.cursor = ValueCursor::new_end(view.values.clone())
+                    view.scroll = GlobalCursor::new_end(view.values.clone(), view.rect.width)
                         .expect("values should still exist");
-                    view.scroll = view.cursor.clone();
-                    for _ in 0..line_limit - 1 {
-                        view.scroll.regress(&view.folds);
-                    }
+                    view.cursor = view.scroll.value_cursor.clone();
                 }
                 _ => {}
             },
@@ -347,58 +338,14 @@ struct App {
     show_tree: bool,
 }
 
-struct JedLayout {
-    tree: Option<Rect>,
-    left: Rect,
-    right: Rect,
-    query: Rect,
-}
-
-impl JedLayout {
-    fn new<B: tui::backend::Backend>(f: &Frame<B>, show_tree: bool) -> JedLayout {
-        let size = f.size();
-        let vchunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(1)].as_ref())
-            .split(size);
-        if show_tree {
-            let tree_split = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Length(20), Constraint::Ratio(1, 1)].as_ref())
-                .split(vchunks[0]);
-            let views = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)].as_ref())
-                .split(tree_split[1]);
-            JedLayout {
-                tree: Some(tree_split[0]),
-                left: views[0],
-                right: views[1],
-                query: vchunks[1],
-            }
-        } else {
-            let views = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)].as_ref())
-                .split(vchunks[0]);
-            JedLayout {
-                tree: None,
-                left: views[0],
-                right: views[1],
-                query: vchunks[1],
-            }
-        }
-    }
-}
-
 enum AppRenderMode {
     Normal,
     InputEditor,
 }
 
 impl App {
-    fn new<R: io::Read>(r: R, name: String) -> io::Result<Self> {
-        let views = ViewTree::new_from_reader(r, name)?;
+    fn new<R: io::Read>(r: R, name: String, layout: JedLayout) -> io::Result<Self> {
+        let views = ViewTree::new_from_reader(r, name, layout)?;
         let index = ViewTreeIndex {
             parent: Vec::new(),
             child: 0,
@@ -437,11 +384,11 @@ impl App {
             Focus::Right => right,
         }
     }
-    fn recompute_right(&mut self) {
+    fn recompute_right(&mut self, right_rect: Rect) {
         let (left, right, query) = self.current_views_mut();
         match &mut left.view {
             View::Json(Some(left)) => {
-                right.view = left.apply_query(query);
+                right.view = left.apply_query(query, right_rect);
             }
             View::Json(None) | View::Error(_) => {
                 right.view = View::Json(None);
@@ -492,7 +439,7 @@ impl App {
             }
         }
     }
-    fn search(&mut self, line_limit: usize, reverse: bool) {
+    fn search(&mut self, reverse: bool) {
         let re = if let Some(re) = &self.search_re {
             re
         } else {
@@ -523,10 +470,11 @@ impl App {
         };
         view.unfold_around_cursor();
         if !view
-            .visible_range(&view.folds, line_limit)
+            .visible_range(&view.folds)
             .contains(&view.cursor.to_path())
         {
-            view.scroll = view.cursor.clone();
+            view.scroll = GlobalCursor::new(view.values.clone(), view.rect.width)
+                .expect("values should still exist");
         }
     }
 }
