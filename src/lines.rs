@@ -347,13 +347,10 @@ impl LineCursor {
     pub fn new_at_end(value: JVString, width: u16) -> Self {
         // We start from the start and scan forward to populate line_widths
         let mut out = Self::new_at_start(value, width);
-        dbg!(&out);
         while out.position != LineCursorPosition::End {
             out.move_next();
-            dbg!(&out);
         }
         out.move_prev();
-        dbg!(&out);
         out
     }
     pub fn set_width(&mut self, width: u16) {

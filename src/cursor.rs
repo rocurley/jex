@@ -347,6 +347,8 @@ impl GlobalCursor {
         if let JV::String(ref value) = &self.value_cursor.focus {
             let width = self.value_cursor.content_width(width);
             self.line_cursor = Some(LineCursor::new_at_start(value.clone(), width));
+        } else {
+            self.line_cursor = None;
         }
         Some(())
     }
@@ -812,7 +814,7 @@ mod tests {
     }
     proptest! {
         #[test]
-        fn prop_advance_regress(values in proptest::collection::vec(arb_json(), 1..10), width in 50u16..250) {
+        fn prop_advance_regress(values in proptest::collection::vec(arb_json(), 1..10), width in 8u16..250) {
             let jsons : Vec<JV> = values.iter().map(|v| v.into()).collect();
             let jsons : Rc<[JV]> = jsons.into();
             let folds = HashSet::new();
