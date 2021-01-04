@@ -169,7 +169,14 @@ fn write_escaped_char<W: std::io::Write>(c: char, w: &mut W) -> std::io::Result<
         '\n' => write!(w, r#"\n"#),
         '\r' => write!(w, r#"\r"#),
         '\t' => write!(w, r#"\t"#),
-        _ if is_unicode_escaped(c) => write!(w, "\\u{:04x}", c as u32), // \u1234
+        _ if is_unicode_escaped(c) => {
+            let mut buf = [0u16, 0];
+            let encoded = c.encode_utf16(&mut buf);
+            for pt in encoded {
+                write!(w, "\\u{:04x}", *pt)?; // \u1234
+            }
+            Ok(())
+        }
         _ => write!(w, "{}", c),
     }
 }
@@ -177,7 +184,7 @@ fn write_escaped_char<W: std::io::Write>(c: char, w: &mut W) -> std::io::Result<
 fn display_width(c: char) -> u8 {
     match c {
         '\"' | '\\' | '\u{08}' | '\u{0C}' | '\n' | '\r' | '\t' => 2,
-        _ if is_unicode_escaped(c) => 6, // \u1234
+        _ if is_unicode_escaped(c) => 6 * c.len_utf16() as u8, // \u1234
         // TODO: It kind of sucks to have this huge table that get_general_category uses and
         // not even get the width from it. Probably we should make our own table at some point,
         // with values Escaped | HalfWidth | FullWidth | Special. 2 bits, you could pack that in
