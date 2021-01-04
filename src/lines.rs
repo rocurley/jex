@@ -307,7 +307,15 @@ impl LineCursor {
         let line_widths = self.line_widths.borrow_mut();
         match &mut self.position {
             LineCursorPosition::Start => {}
-            LineCursorPosition::End => {}
+            LineCursorPosition::End => {
+                let current_line = line_widths.len() - 1;
+                let s = self.value.value();
+                let start = s.len() - line_widths[current_line] as usize;
+                self.position = LineCursorPosition::Valid {
+                    current_line,
+                    start,
+                }
+            }
             LineCursorPosition::Valid { current_line, .. } if *current_line == 0 => {
                 self.position = LineCursorPosition::Start
             }
@@ -339,10 +347,13 @@ impl LineCursor {
     pub fn new_at_end(value: JVString, width: u16) -> Self {
         // We start from the start and scan forward to populate line_widths
         let mut out = Self::new_at_start(value, width);
+        dbg!(&out);
         while out.position != LineCursorPosition::End {
             out.move_next();
+            dbg!(&out);
         }
         out.move_prev();
+        dbg!(&out);
         out
     }
     pub fn set_width(&mut self, width: u16) {
@@ -484,7 +495,8 @@ pub mod memory {
 
 #[cfg(test)]
 mod tests {
-    use super::{display_width, escaped_str};
+    use super::{display_width, escaped_str, LineCursor};
+    use crate::jq::jv::JVString;
     use proptest::prelude::*;
     use unicode_width::UnicodeWidthStr;
     proptest! {
@@ -494,6 +506,51 @@ mod tests {
             let expected_width = escaped.width();
             let actual_inner_width: usize = string.chars().map(|c| display_width(c) as usize).sum();
             assert_eq!(expected_width, actual_inner_width , "original: {:?}, escaped: {}", &string, &escaped);
+        }
+    }
+    fn read_cursor_lines_reverse(mut cursor: LineCursor) -> String {
+        let mut out = String::new();
+        while let Some(line) = cursor.current() {
+            let mut s = line.to_string();
+            assert!(s.width() <= cursor.width as usize);
+            std::mem::swap(&mut out, &mut s);
+            out.extend(s.chars());
+            cursor.move_next();
+        }
+        out
+    }
+    fn read_cursor_lines(mut cursor: LineCursor) -> String {
+        let mut out = String::new();
+        while let Some(line) = cursor.current() {
+            let s = line.to_string();
+            assert!(s.width() <= cursor.width as usize);
+            out.extend(s.chars());
+            cursor.move_prev();
+        }
+        out
+    }
+    proptest! {
+        #[test]
+        fn prop_display_lines(string in any::<String>(), width in 7..u16::MAX) {
+            let value = JVString::new(&string);
+            let wide_cursor = LineCursor::new_at_start(value.clone(), u16::MAX);
+            let actual_cursor = LineCursor::new_at_start(value, width);
+            let expected = read_cursor_lines(wide_cursor);
+            let actual = read_cursor_lines(actual_cursor);
+            assert!(actual.len() >= 2);
+            assert_eq!(expected, actual);
+        }
+    }
+    proptest! {
+        #[test]
+        fn prop_display_lines_reverse(string in any::<String>(), width in 7..u16::MAX) {
+            let value = JVString::new(&string);
+            let wide_cursor = LineCursor::new_at_end(value.clone(), u16::MAX);
+            let actual_cursor = LineCursor::new_at_end(value, width);
+            let expected = read_cursor_lines_reverse(wide_cursor);
+            let actual = read_cursor_lines_reverse(actual_cursor);
+            assert!(actual.len() >= 2);
+            assert_eq!(expected, actual);
         }
     }
 }

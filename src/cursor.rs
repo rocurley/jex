@@ -361,6 +361,8 @@ impl GlobalCursor {
         if let JV::String(ref value) = &self.value_cursor.focus {
             let width = self.value_cursor.content_width(width);
             self.line_cursor = Some(LineCursor::new_at_end(value.clone(), width));
+        } else {
+            self.line_cursor = None;
         }
         Some(())
     }
@@ -796,25 +798,43 @@ mod tests {
             }
         }
     }
-    fn check_advance_regress(cursor: &ValueCursor, folds: &HashSet<(usize, Vec<usize>)>) {
-        let mut actual: ValueCursor = cursor.clone();
-        if actual.advance(folds).is_none() {
+    fn check_advance_regress(
+        cursor: &GlobalCursor,
+        folds: &HashSet<(usize, Vec<usize>)>,
+        width: u16,
+    ) {
+        let mut actual = cursor.clone();
+        if actual.advance(folds, width).is_none() {
             return;
         }
-        actual.regress(folds).unwrap();
+        actual.regress(folds, width).unwrap();
         assert_eq!(actual, *cursor);
     }
     proptest! {
         #[test]
-        fn prop_advance_regress(values in proptest::collection::vec(arb_json(), 1..10)) {
+        fn prop_advance_regress(values in proptest::collection::vec(arb_json(), 1..10), width in 50u16..250) {
             let jsons : Vec<JV> = values.iter().map(|v| v.into()).collect();
             let jsons : Rc<[JV]> = jsons.into();
             let folds = HashSet::new();
-            if let Some(mut cursor) = ValueCursor::new(jsons.clone()) {
-                check_advance_regress(&cursor, &folds);
-                while let Some(()) = cursor.advance(&folds) {
-                    check_advance_regress(&cursor, &folds);
+            if let Some(mut cursor) = GlobalCursor::new(jsons.clone(), width) {
+                check_advance_regress(&cursor, &folds, width);
+                while let Some(()) = cursor.advance(&folds, width) {
+                    check_advance_regress(&cursor, &folds, width);
                 }
+            }
+        }
+    }
+    #[test]
+    fn unit_advance_regress() {
+        let values = vec![json!([""])];
+        let width = 50;
+        let jsons: Vec<JV> = values.iter().map(|v| v.into()).collect();
+        let jsons: Rc<[JV]> = jsons.into();
+        let folds = HashSet::new();
+        if let Some(mut cursor) = GlobalCursor::new(jsons.clone(), width) {
+            check_advance_regress(&cursor, &folds, width);
+            while let Some(()) = cursor.advance(&folds, width) {
+                check_advance_regress(&cursor, &folds, width);
             }
         }
     }
