@@ -330,8 +330,8 @@ mod tests {
     const DUMMY_RECT: Rect = Rect {
         x: 0,
         y: 0,
-        width: 20,
-        height: 20,
+        width: 100,
+        height: 100,
     };
     fn check_folds(values: Vec<Value>) {
         let jsons: Vec<JV> = values.iter().map(|v| v.into()).collect();

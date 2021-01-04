@@ -88,7 +88,7 @@ fn json_to_lines_inner<'a>(
             push_line(key, LineContent::ArrayStart, indent, out, false);
             for (i, x) in xs.iter().enumerate() {
                 let comma = i != xs.len() - 1;
-                json_to_lines_inner(None, x, indent + 1, out, comma);
+                json_to_lines_inner(None, x, indent + 2, out, comma);
             }
             push_line(None, LineContent::ArrayEnd, indent, out, comma);
         }
@@ -96,7 +96,7 @@ fn json_to_lines_inner<'a>(
             push_line(key, LineContent::ObjectStart, indent, out, false);
             for (i, (k, x)) in xs.iter().enumerate() {
                 let comma = i != xs.len() - 1;
-                json_to_lines_inner(Some(k.as_str().into()), x, indent + 1, out, comma);
+                json_to_lines_inner(Some(k.as_str().into()), x, indent + 2, out, comma);
             }
             push_line(None, LineContent::ObjectEnd, indent, out, comma);
         }
