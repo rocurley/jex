@@ -1,4 +1,4 @@
-use crate::lines::{Line, LineContent};
+use crate::lines::{Line, LineContent, StrLine};
 use proptest::prelude::*;
 use serde_json::value::Value;
 pub fn arb_json() -> impl Strategy<Value = Value> {
@@ -34,7 +34,7 @@ pub fn json_to_lines<'a, I: Iterator<Item = &'a Value>>(vs: I) -> Vec<Line<'a>> 
 fn push_line<'a>(
     key: Option<&'a str>,
     content: LineContent<'a>,
-    indent: u8,
+    indent: u16,
     out: &mut Vec<Line<'a>>,
     comma: bool,
 ) {
@@ -50,7 +50,7 @@ fn push_line<'a>(
 fn json_to_lines_inner<'a>(
     key: Option<&'a str>,
     v: &'a Value,
-    indent: u8,
+    indent: u16,
     out: &mut Vec<Line<'a>>,
     comma: bool,
 ) {
@@ -73,7 +73,12 @@ fn json_to_lines_inner<'a>(
         Value::String(s) => {
             push_line(
                 key,
-                LineContent::String(s.as_str().into()),
+                LineContent::String(StrLine {
+                    is_start: true,
+                    is_end: true,
+                    raw: s,
+                    start: 0,
+                }),
                 indent,
                 out,
                 comma,

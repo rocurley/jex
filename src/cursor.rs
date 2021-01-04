@@ -319,14 +319,14 @@ impl GlobalCursor {
     ) -> Vec<Spans<'static>> {
         let mut lines = Vec::with_capacity(rect.height as usize);
         if let Some(c) = self.line_cursor.as_mut() {
-            c.set_width(rect.width);
+            c.set_width(self.value_cursor.content_width(rect.width));
         }
         lines.push(
             self.current_line(folds)
                 .render(Some(&self.value_cursor) == cursor, rect.width),
         );
         while lines.len() < rect.height as usize {
-            if let None = self.advance(folds, rect) {
+            if let None = self.advance(folds, rect.width) {
                 break;
             };
             lines.push(
@@ -336,7 +336,7 @@ impl GlobalCursor {
         }
         lines
     }
-    pub fn advance(&mut self, folds: &HashSet<(usize, Vec<usize>)>, rect: Rect) -> Option<()> {
+    pub fn advance(&mut self, folds: &HashSet<(usize, Vec<usize>)>, width: u16) -> Option<()> {
         if let Some(lc) = self.line_cursor.as_mut() {
             lc.move_next();
             if lc.current().is_some() {
@@ -345,12 +345,12 @@ impl GlobalCursor {
         }
         self.value_cursor.advance(folds)?;
         if let JV::String(ref value) = &self.value_cursor.focus {
-            let width = self.value_cursor.content_width(rect.width);
+            let width = self.value_cursor.content_width(width);
             self.line_cursor = Some(LineCursor::new_at_start(value.clone(), width));
         }
         Some(())
     }
-    pub fn regress(&mut self, folds: &HashSet<(usize, Vec<usize>)>, rect: Rect) -> Option<()> {
+    pub fn regress(&mut self, folds: &HashSet<(usize, Vec<usize>)>, width: u16) -> Option<()> {
         if let Some(lc) = self.line_cursor.as_mut() {
             lc.move_prev();
             if lc.current().is_some() {
@@ -359,7 +359,7 @@ impl GlobalCursor {
         }
         self.value_cursor.regress(folds)?;
         if let JV::String(ref value) = &self.value_cursor.focus {
-            let width = self.value_cursor.content_width(rect.width);
+            let width = self.value_cursor.content_width(width);
             self.line_cursor = Some(LineCursor::new_at_end(value.clone(), width));
         }
         Some(())
@@ -733,7 +733,7 @@ impl Ord for Path {
 
 #[cfg(test)]
 mod tests {
-    use super::ValueCursor;
+    use super::{GlobalCursor, ValueCursor};
     use crate::{
         jq::jv::JV,
         testing::{arb_json, json_to_lines},
@@ -764,12 +764,13 @@ mod tests {
         fn prop_lines(values in proptest::collection::vec(arb_json(), 1..10)) {
             let jsons : Vec<JV> = values.iter().map(|v| v.into()).collect();
             let folds = HashSet::new();
+            let width = u16::MAX;
             let mut expected_lines = json_to_lines(values.iter()).into_iter();
-            if let Some(mut cursor) = ValueCursor::new(jsons.into()) {
+            if let Some(mut cursor) = GlobalCursor::new(jsons.into(), width) {
                 let mut actual_lines = Vec::new();
                 actual_lines.push(cursor.current_line(&folds));
                 assert_eq!(cursor.current_line(&folds), expected_lines.next().expect("Expected lines shorter than actual lines"));
-                while let Some(()) = cursor.advance(&folds) {
+                while let Some(()) = cursor.advance(&folds, width) {
                     assert_eq!(cursor.current_line(&folds), expected_lines.next().expect("Expected lines shorter than actual lines"));
                 }
             }

@@ -321,19 +321,21 @@ impl JsonView {
 #[cfg(test)]
 mod tests {
     use super::JsonView;
-    use crate::{
-        cursor::{GlobalCursor, ValueCursor},
-        jq::jv::JV,
-        testing::arb_json,
-    };
+    use crate::{cursor::GlobalCursor, jq::jv::JV, testing::arb_json};
     use pretty_assertions::assert_eq;
     use proptest::proptest;
     use serde_json::{Deserializer, Value};
     use std::{collections::HashSet, fs, io};
     use tui::layout::Rect;
+    const DUMMY_RECT: Rect = Rect {
+        x: 0,
+        y: 0,
+        width: 20,
+        height: 20,
+    };
     fn check_folds(values: Vec<Value>) {
         let jsons: Vec<JV> = values.iter().map(|v| v.into()).collect();
-        let mut view = match JsonView::new(jsons) {
+        let mut view = match JsonView::new(jsons, DUMMY_RECT) {
             None => return,
             Some(view) => view,
         };
@@ -364,12 +366,9 @@ mod tests {
             .into_iter::<JV>()
             .collect::<Result<Vec<JV>, _>>()
             .unwrap();
-        let mut view = JsonView::new(jsons).unwrap();
-        view.cursor = ValueCursor::new_end(view.values.clone()).unwrap();
-        view.scroll = GlobalCursor {
-            value_cursor: view.cursor.clone(),
-            line_start: 0,
-        };
+        let mut view = JsonView::new(jsons, DUMMY_RECT).unwrap();
+        view.scroll = GlobalCursor::new_end(view.values.clone(), DUMMY_RECT.width).unwrap();
+        view.cursor = view.scroll.value_cursor.clone();
         let line_limit = 20;
         let rect = Rect {
             x: 0,
@@ -378,7 +377,7 @@ mod tests {
             height: 20,
         };
         for _ in 0..line_limit - 1 {
-            view.scroll.regress(&view.folds);
+            view.scroll.regress(&view.folds, DUMMY_RECT.width);
         }
         view.toggle_fold();
         view.render(rect, true);
