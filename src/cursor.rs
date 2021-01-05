@@ -743,7 +743,7 @@ mod tests {
         testing::{arb_json, json_to_lines},
     };
     use pretty_assertions::assert_eq;
-    use proptest::proptest;
+    use proptest::{prelude::*, proptest};
     use serde_json::{json, Value};
     use std::{collections::HashSet, rc::Rc};
 
@@ -812,15 +812,31 @@ mod tests {
         actual.regress(folds, width).unwrap();
         assert_eq!(actual, *cursor);
     }
+    fn hashable_cursor_key(cursor: &GlobalCursor) -> impl std::hash::Hash + Eq {
+        (
+            cursor.value_cursor.to_path(),
+            cursor.line_cursor.as_ref().map(|lc| lc.current_line()),
+        )
+    }
     proptest! {
+        #![proptest_config(ProptestConfig {
+            timeout: 100,
+            .. ProptestConfig::default()
+        })]
         #[test]
         fn prop_advance_regress(values in proptest::collection::vec(arb_json(), 1..10), width in 8u16..250) {
             let jsons : Vec<JV> = values.iter().map(|v| v.into()).collect();
             let jsons : Rc<[JV]> = jsons.into();
             let folds = HashSet::new();
+            let mut seen = HashSet::new();
             if let Some(mut cursor) = GlobalCursor::new(jsons.clone(), width) {
                 check_advance_regress(&cursor, &folds, width);
                 while let Some(()) = cursor.advance(&folds, width) {
+                    let key = hashable_cursor_key(&cursor);
+                    if seen.contains(&key) {
+                        panic!("Infinite loop");
+                    }
+                    seen.insert(key);
                     check_advance_regress(&cursor, &folds, width);
                 }
             }
@@ -828,15 +844,28 @@ mod tests {
     }
     #[test]
     fn unit_advance_regress() {
-        let values = vec![json!([""])];
-        let width = 50;
-        let jsons: Vec<JV> = values.iter().map(|v| v.into()).collect();
-        let jsons: Rc<[JV]> = jsons.into();
-        let folds = HashSet::new();
-        if let Some(mut cursor) = GlobalCursor::new(jsons.clone(), width) {
-            check_advance_regress(&cursor, &folds, width);
-            while let Some(()) = cursor.advance(&folds, width) {
+        let tests = vec![
+            (vec![json!([""])], 50),
+            (vec![json!("aaa\u{e000}¡")], 8),
+            (vec![json!([[{"\u{20f1}¡¡a": "\u{b}"}]])], 16),
+        ];
+        for (values, width) in tests {
+            let jsons: Vec<JV> = values.iter().map(|v| v.into()).collect();
+            let jsons: Rc<[JV]> = jsons.into();
+            let folds = HashSet::new();
+            let mut seen = HashSet::new();
+            if let Some(mut cursor) = GlobalCursor::new(jsons.clone(), width) {
+                dbg!(&cursor);
                 check_advance_regress(&cursor, &folds, width);
+                while let Some(()) = cursor.advance(&folds, width) {
+                    dbg!(&cursor);
+                    let key = hashable_cursor_key(&cursor);
+                    if seen.contains(&key) {
+                        panic!("Infinite loop");
+                    }
+                    seen.insert(key);
+                    check_advance_regress(&cursor, &folds, width);
+                }
             }
         }
     }

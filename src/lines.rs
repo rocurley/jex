@@ -207,11 +207,11 @@ impl<'a> StrLine<'a> {
     fn to_string(&self) -> String {
         let mut escaped_raw = Vec::new();
         if self.is_start {
-            write!(&mut escaped_raw, "\"");
+            write!(&mut escaped_raw, "\"").expect("Write to a vec should be infaliable");
         }
-        write_escaped_str(self.raw, &mut escaped_raw);
+        write_escaped_str(self.raw, &mut escaped_raw).expect("Write to a vec should be infaliable");
         if self.is_end {
-            write!(&mut escaped_raw, "\"");
+            write!(&mut escaped_raw, "\"").expect("Write to a vec should be infaliable");
         }
         String::from_utf8(escaped_raw).expect("Escaped string was not utf-8")
     }
@@ -294,10 +294,18 @@ impl LineCursor {
                 *current_line += 1;
                 if *current_line == line_widths.len() {
                     let s = self.value.value();
+                    assert!(*start <= s.len());
                     if *start == s.len() {
                         self.position = LineCursorPosition::End;
                     } else {
-                        Self::extend_line_widths(&mut line_widths, s, self.width);
+                        Self::extend_line_widths(&mut line_widths, &s[*start..], self.width);
+                        assert_ne!(
+                            *line_widths.last().unwrap(),
+                            0,
+                            "Took zero-width line for string {:?} with width {}",
+                            &s[*start..],
+                            self.width
+                        );
                     }
                 }
             }
@@ -335,6 +343,7 @@ impl LineCursor {
         }
     }
     pub fn new_at_start(value: JVString, width: u16) -> Self {
+        assert!(width > 6);
         let mut out = LineCursor {
             line_widths: Rc::new(RefCell::new(Vec::new())),
             position: LineCursorPosition::Start,
@@ -345,6 +354,7 @@ impl LineCursor {
         out
     }
     pub fn new_at_end(value: JVString, width: u16) -> Self {
+        assert!(width > 6);
         // We start from the start and scan forward to populate line_widths
         let mut out = Self::new_at_start(value, width);
         while out.position != LineCursorPosition::End {
@@ -512,7 +522,7 @@ mod tests {
             assert!(s.width() <= cursor.width as usize);
             std::mem::swap(&mut out, &mut s);
             out.extend(s.chars());
-            cursor.move_next();
+            cursor.move_prev();
         }
         out
     }
@@ -522,7 +532,7 @@ mod tests {
             let s = line.to_string();
             assert!(s.width() <= cursor.width as usize);
             out.extend(s.chars());
-            cursor.move_prev();
+            cursor.move_next();
         }
         out
     }
@@ -537,6 +547,18 @@ mod tests {
             assert!(actual.len() >= 2);
             assert_eq!(expected, actual);
         }
+    }
+    #[test]
+    fn unit_display_lines() {
+        let string = "aaa\u{e000}¡";
+        let width = 8;
+        let value = JVString::new(&string);
+        let wide_cursor = LineCursor::new_at_start(value.clone(), u16::MAX);
+        let actual_cursor = LineCursor::new_at_start(value, width);
+        let expected = read_cursor_lines(wide_cursor);
+        let actual = read_cursor_lines(actual_cursor);
+        assert!(actual.len() >= 2);
+        assert_eq!(expected, actual);
     }
     proptest! {
         #[test]
