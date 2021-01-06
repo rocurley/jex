@@ -307,9 +307,9 @@ impl GlobalCursor {
             line_cursor,
         })
     }
-    pub fn current_line(&self, folds: &HashSet<(usize, Vec<usize>)>) -> Line {
+    pub fn current_line(&self, folds: &HashSet<(usize, Vec<usize>)>, width: u16) -> Line {
         self.value_cursor
-            .current_line(folds, self.line_cursor.as_ref())
+            .current_line(folds, self.line_cursor.as_ref(), width)
     }
     pub fn render_lines(
         &mut self,
@@ -322,7 +322,7 @@ impl GlobalCursor {
             c.set_width(self.value_cursor.content_width(rect.width));
         }
         lines.push(
-            self.current_line(folds)
+            self.current_line(folds, rect.width)
                 .render(Some(&self.value_cursor) == cursor, rect.width),
         );
         while lines.len() < rect.height as usize {
@@ -330,7 +330,7 @@ impl GlobalCursor {
                 break;
             };
             lines.push(
-                self.current_line(folds)
+                self.current_line(folds, rect.width)
                     .render(Some(&self.value_cursor) == cursor, rect.width),
             );
         }
@@ -464,12 +464,13 @@ impl ValueCursor {
             },
         }
     }
-    pub fn current_indent(&self) -> u16 {
-        (self.frames.len() * 2) as u16
+    pub fn current_indent(&self, width: u16) -> u16 {
+        let desired_indent = (self.frames.len() * 2) as u16;
+        std::cmp::min(desired_indent, width - 7)
     }
     pub fn content_width(&self, width: u16) -> u16 {
         let key = self.current_key();
-        let indent = self.current_indent();
+        let indent = self.current_indent(width);
         let indent_span = Span::raw(" ".repeat(indent as usize));
         let out = match key {
             Some(key) => vec![
@@ -481,12 +482,13 @@ impl ValueCursor {
         };
         let consumed_width: u16 = out.iter().map(|span| span.width() as u16).sum();
         let remainining_width = width.saturating_sub(consumed_width);
-        remainining_width
+        std::cmp::max(7, remainining_width)
     }
     pub fn current_line<'a>(
         &'a self,
         folds: &HashSet<(usize, Vec<usize>)>,
         line_cursor: Option<&'a LineCursor>,
+        width: u16,
     ) -> Line<'a> {
         use FocusPosition::*;
         let folded = folds.contains(&self.to_path().strip_position());
@@ -519,7 +521,7 @@ impl ValueCursor {
                 Some(CursorFrame::Object { iterator, .. }) => iterator.len() != 0,
             },
         };
-        let indent = self.current_indent();
+        let indent = self.current_indent(width);
         Line {
             content,
             key,
@@ -772,10 +774,10 @@ mod tests {
             let mut expected_lines = json_to_lines(values.iter()).into_iter();
             if let Some(mut cursor) = GlobalCursor::new(jsons.into(), width) {
                 let mut actual_lines = Vec::new();
-                actual_lines.push(cursor.current_line(&folds));
-                assert_eq!(cursor.current_line(&folds), expected_lines.next().expect("Expected lines shorter than actual lines"));
+                actual_lines.push(cursor.current_line(&folds, width));
+                assert_eq!(cursor.current_line(&folds, width), expected_lines.next().expect("Expected lines shorter than actual lines"));
                 while let Some(()) = cursor.advance(&folds, width) {
-                    assert_eq!(cursor.current_line(&folds), expected_lines.next().expect("Expected lines shorter than actual lines"));
+                    assert_eq!(cursor.current_line(&folds, width), expected_lines.next().expect("Expected lines shorter than actual lines"));
                 }
             }
             assert!(expected_lines.next().is_none());
@@ -819,11 +821,6 @@ mod tests {
         )
     }
     proptest! {
-        #![proptest_config(ProptestConfig {
-            timeout: 100,
-            .. ProptestConfig::default()
-        })]
-        #[test]
         fn prop_advance_regress(values in proptest::collection::vec(arb_json(), 1..10), width in 8u16..250) {
             let jsons : Vec<JV> = values.iter().map(|v| v.into()).collect();
             let jsons : Rc<[JV]> = jsons.into();
@@ -848,6 +845,11 @@ mod tests {
             (vec![json!([""])], 50),
             (vec![json!("aaa\u{e000}¡")], 8),
             (vec![json!([[{"\u{20f1}¡¡a": "\u{b}"}]])], 16),
+            (vec![json!([[{"\u{20f1}¡¡a": "\u{b}"}]])], 16),
+            (
+                vec![json!([[{"¡¡": "\u{0}\u{0}\u{7f}\u{3fffe}®\u{e000}A0\u{3fffe}𠀀\""}]])],
+                8,
+            ),
         ];
         for (values, width) in tests {
             let jsons: Vec<JV> = values.iter().map(|v| v.into()).collect();

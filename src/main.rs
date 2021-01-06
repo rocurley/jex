@@ -92,6 +92,8 @@ struct BenchMode {}
 //   this, moving up and down will continue to move you to the next value unless the currently
 //   focused value is a long string that extends off the screen in the direction moved. If it is,
 //   moving will instead scroll without changing the focused value.
+// * Long keys: once you can wrap keys across multiple lines, you have the tools to guarantee that
+//   that the content width never falls below 7.
 // * Edit tree:
 //   * Children can be modified if they have no children
 //   * Allow copying descendents onto another root, so you if you want to modify a tree's root you
@@ -99,6 +101,7 @@ struct BenchMode {}
 // * Error messages (no search results, can't fold a leaf, can't edit a non-leaf)
 // * Saving
 // * Rename current view
+
 #[cfg(feature = "dev-tools")]
 fn main() -> Result<(), io::Error> {
     let args: Args = argh::from_env();

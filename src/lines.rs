@@ -262,6 +262,14 @@ impl LineCursor {
     }
     fn extend_line_widths(line_widths: &mut Vec<u16>, s: &str, width: u16) {
         let (line, line_term_width) = take_width(s, width);
+        if s.len() > 0 {
+            assert!(
+                line.len() != 0,
+                "Took zero-width line for string {:?} with width {}",
+                s,
+                width
+            );
+        }
         line_widths.push(line.len() as u16);
         if line.len() == s.len() && line_term_width == width {
             // Everything but the closing quote fits on this line
@@ -299,13 +307,6 @@ impl LineCursor {
                         self.position = LineCursorPosition::End;
                     } else {
                         Self::extend_line_widths(&mut line_widths, &s[*start..], self.width);
-                        assert_ne!(
-                            *line_widths.last().unwrap(),
-                            0,
-                            "Took zero-width line for string {:?} with width {}",
-                            &s[*start..],
-                            self.width
-                        );
                     }
                 }
             }
@@ -536,40 +537,39 @@ mod tests {
         }
         out
     }
-    proptest! {
-        #[test]
-        fn prop_display_lines(string in any::<String>(), width in 7..u16::MAX) {
-            let value = JVString::new(&string);
+    fn check_lines(string: &str, width: u16) {
+        let value = JVString::new(&string);
+        {
             let wide_cursor = LineCursor::new_at_start(value.clone(), u16::MAX);
-            let actual_cursor = LineCursor::new_at_start(value, width);
+            let actual_cursor = LineCursor::new_at_start(value.clone(), width);
             let expected = read_cursor_lines(wide_cursor);
             let actual = read_cursor_lines(actual_cursor);
             assert!(actual.len() >= 2);
             assert_eq!(expected, actual);
         }
-    }
-    #[test]
-    fn unit_display_lines() {
-        let string = "aaa\u{e000}¡";
-        let width = 8;
-        let value = JVString::new(&string);
-        let wide_cursor = LineCursor::new_at_start(value.clone(), u16::MAX);
-        let actual_cursor = LineCursor::new_at_start(value, width);
-        let expected = read_cursor_lines(wide_cursor);
-        let actual = read_cursor_lines(actual_cursor);
-        assert!(actual.len() >= 2);
-        assert_eq!(expected, actual);
-    }
-    proptest! {
-        #[test]
-        fn prop_display_lines_reverse(string in any::<String>(), width in 7..u16::MAX) {
-            let value = JVString::new(&string);
+        {
             let wide_cursor = LineCursor::new_at_end(value.clone(), u16::MAX);
             let actual_cursor = LineCursor::new_at_end(value, width);
             let expected = read_cursor_lines_reverse(wide_cursor);
             let actual = read_cursor_lines_reverse(actual_cursor);
             assert!(actual.len() >= 2);
             assert_eq!(expected, actual);
+        }
+    }
+    proptest! {
+        #[test]
+        fn prop_display_lines(string in any::<String>(), width in 7..u16::MAX) {
+            check_lines(&string, width);
+        }
+    }
+    #[test]
+    fn unit_display_lines() {
+        let tests = vec![
+            ("aaa\u{e000}¡", 8),
+            ("\u{0}\u{0}\u{7f}\u{3fffe}®\u{e000}A0\u{3fffe}𠀀\"", 8),
+        ];
+        for (string, width) in tests {
+            check_lines(&string, width);
         }
     }
 }
