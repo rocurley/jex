@@ -6,13 +6,14 @@ use crate::{
     },
     layout::JedLayout,
 };
+use log::trace;
 use serde_json::Deserializer;
 use std::{collections::HashSet, io, ops::RangeInclusive, rc::Rc};
 use tui::{
     layout::{Alignment, Rect},
     style::{Color, Style},
     text::{Span, Spans},
-    widgets::Paragraph,
+    widgets::{Block, Borders, Paragraph},
 };
 
 #[derive(Debug, Clone)]
@@ -41,11 +42,14 @@ impl ViewTree {
         tree.push_trivial_child(layout.right);
         Ok(tree)
     }
-    pub fn push_trivial_child(&mut self, target_rect: Rect) {
+    pub fn push_trivial_child(&mut self, target_view_rect: Rect) {
         if let View::Json(Some(view)) = &self.view_frame.view {
             let name = "New Query".into();
+            let target_json_rect = Block::default()
+                .borders(Borders::ALL)
+                .inner(target_view_rect);
             let view_frame = ViewFrame {
-                view: View::new(view.values.clone(), target_rect),
+                view: View::new(view.values.clone(), target_json_rect),
                 name,
             };
             let child = ViewTree {
@@ -217,8 +221,9 @@ pub enum View {
 }
 
 impl View {
-    pub fn new<V: Into<Rc<[JV]>>>(values: V, rect: Rect) -> Self {
-        View::Json(JsonView::new(values, rect))
+    pub fn new<V: Into<Rc<[JV]>>>(values: V, view_rect: Rect) -> Self {
+        let json_rect = Block::default().borders(Borders::ALL).inner(view_rect);
+        View::Json(JsonView::new(values, json_rect))
     }
     pub fn render(&self, rect: Rect, has_focus: bool) -> Paragraph {
         match self {
@@ -262,9 +267,11 @@ impl JsonView {
         })
     }
     fn render(&self, rect: Rect, has_focus: bool) -> Paragraph {
+        trace!("Rendering started: target rect {:?}", rect);
         let JsonView { cursor, scroll, .. } = self;
         let cursor = if has_focus { Some(cursor) } else { None };
         let text = scroll.clone().render_lines(cursor, &self.folds, rect);
+        trace!("Rendering complete");
         Paragraph::new(text)
             .style(Style::default().fg(Color::White).bg(Color::Black))
             .alignment(Alignment::Left)
@@ -328,10 +335,10 @@ mod tests {
     use std::{collections::HashSet, fs, io};
     use tui::layout::Rect;
     const DUMMY_RECT: Rect = Rect {
-        x: 0,
-        y: 0,
-        width: 100,
-        height: 100,
+        x: 1,
+        y: 1,
+        width: 135,
+        height: 70,
     };
     fn check_folds(values: Vec<Value>) {
         let jsons: Vec<JV> = values.iter().map(|v| v.into()).collect();
@@ -381,5 +388,29 @@ mod tests {
         }
         view.toggle_fold();
         view.render(rect, true);
+    }
+    #[test]
+    fn unit_scroll_render() {
+        simplelog::TestLogger::init(log::LevelFilter::Trace, Default::default()).unwrap();
+        let json_path = "example.json";
+        let f = fs::File::open(&json_path).unwrap();
+        let r = io::BufReader::new(f);
+        let jsons: Vec<JV> = Deserializer::from_reader(r)
+            .into_iter::<JV>()
+            .collect::<Result<Vec<JV>, _>>()
+            .unwrap();
+        let mut view = JsonView::new(jsons.clone(), DUMMY_RECT).unwrap();
+        let right_rect = Rect {
+            x: 138,
+            ..DUMMY_RECT
+        };
+        let right_view = JsonView::new(jsons, right_rect).unwrap();
+        let folds = HashSet::new();
+        view.render(DUMMY_RECT, true);
+        right_view.render(right_rect, true);
+        while let Some(()) = view.scroll.advance(&folds, DUMMY_RECT.width) {
+            view.render(DUMMY_RECT, true);
+            right_view.render(right_rect, true);
+        }
     }
 }

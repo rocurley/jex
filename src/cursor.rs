@@ -2,6 +2,7 @@ use crate::{
     jq::jv::{JVArray, JVObject, OwnedObjectIterator, JV},
     lines::{escaped_str, Line, LineContent, LineCursor},
 };
+use log::trace;
 use regex::Regex;
 use std::{borrow::Cow, cmp::Ordering, collections::HashSet, fmt, rc::Rc};
 use tui::{
@@ -337,9 +338,11 @@ impl GlobalCursor {
         lines
     }
     pub fn advance(&mut self, folds: &HashSet<(usize, Vec<usize>)>, width: u16) -> Option<()> {
+        trace!("Advancing global cursor (width={}): {:#?}", width, self);
         if let Some(lc) = self.line_cursor.as_mut() {
             lc.move_next();
             if lc.current().is_some() {
+                trace!("Advanced global cursor {:#?}", self);
                 return Some(());
             }
         }
@@ -350,6 +353,7 @@ impl GlobalCursor {
         } else {
             self.line_cursor = None;
         }
+        trace!("Advanced global cursor {:#?}", self);
         Some(())
     }
     pub fn regress(&mut self, folds: &HashSet<(usize, Vec<usize>)>, width: u16) -> Option<()> {

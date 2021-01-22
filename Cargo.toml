@@ -19,7 +19,7 @@ debug = true
 
 [features]
 defaullt = []
-dev-tools = ["cpuprofiler",  "prettytable-rs"]
+dev-tools = ["cpuprofiler",  "prettytable-rs", "coredump"]
 
 [dependencies]
 tui = { version = "0.12", default-features = false, features = ['crossterm'] }
@@ -30,10 +30,13 @@ ego-tree = "0.6.1"
 argh= "0.1.3"
 cpuprofiler = {version = "0.0.4", optional = true}
 prettytable-rs = {version = "0.8.0", optional = true}
+coredump = {version = "0.1.1", optional = true}
 rustyline = "6.3.0"
 unicode-width = "0.1.8"
 unicode-general-category = "0.2.0"
 regex = "1.4"
+log = "0.4.13"
+simplelog = { version = "0.9", features = ["test"] }
 [dependencies.jq-sys]
 version = "0.2.2"
 features = ["bundled"]

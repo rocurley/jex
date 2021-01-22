@@ -5,8 +5,10 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use log::trace;
 use regex::Regex;
-use std::{fs, io, io::Write, panic};
+use simplelog::WriteLogger;
+use std::{default::Default, fs, fs::File, io, io::Write, panic};
 use tui::{
     backend::CrosstermBackend,
     layout::{Alignment, Rect},
@@ -31,6 +33,13 @@ struct Args {
     #[cfg(feature = "dev-tools")]
     #[argh(subcommand)]
     mode: Mode,
+    #[argh(option)]
+    #[argh(description = "logging level")]
+    #[argh(default = "log::LevelFilter::Warn")]
+    log_level: log::LevelFilter,
+    #[argh(option)]
+    #[argh(description = "logging output file")]
+    log_path: Option<String>,
     #[argh(positional)]
     json_path: String,
 }
@@ -104,7 +113,10 @@ struct BenchMode {}
 
 #[cfg(feature = "dev-tools")]
 fn main() -> Result<(), io::Error> {
+    use coredump;
+    coredump::register_panic_handler();
     let args: Args = argh::from_env();
+    init_logging(&args);
     match args.mode {
         Mode::Normal(_) => run(args.json_path),
         Mode::Bench(_) => bench(args.json_path),
@@ -114,7 +126,16 @@ fn main() -> Result<(), io::Error> {
 #[cfg(not(feature = "dev-tools"))]
 fn main() -> Result<(), io::Error> {
     let args: Args = argh::from_env();
+    init_logging(&args);
     run(args.json_path)
+}
+
+fn init_logging(args: &Args) {
+    if let Some(path) = args.log_path.as_ref() {
+        let fout = File::create(path).expect("Couldn't create log file");
+        WriteLogger::init(args.log_level, Default::default(), fout)
+            .expect("Couldn't initalize logger");
+    }
 }
 
 fn force_draw<B: tui::backend::Backend, F: FnMut(&mut Frame<B>)>(
@@ -181,6 +202,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
                 continue;
             }
         };
+        trace!("Keypress: {:?}", c);
         match c.code {
             KeyCode::Esc => break,
             KeyCode::Char('t') => {
@@ -235,11 +257,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
             Focus::Right => layout.right,
         };
         let view_frame = app.focused_view_mut();
-        let line_limit = view_rect.height as usize - 2;
-        let json_frame = Rect {
-            height: view_rect.height - 2,
-            ..view_rect
-        };
+        let json_rect = Block::default().borders(Borders::ALL).inner(view_rect);
         match &mut view_frame.view {
             View::Error(_) => {}
             View::Json(None) => {}
@@ -250,7 +268,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
                         .visible_range(&view.folds)
                         .contains(&view.cursor.to_path())
                     {
-                        view.scroll.advance(&view.folds, view_rect.width);
+                        view.scroll.advance(&view.folds, json_rect.width);
                     }
                 }
                 KeyCode::Up => {
@@ -259,7 +277,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
                         .visible_range(&view.folds)
                         .contains(&view.cursor.to_path())
                     {
-                        view.scroll.regress(&view.folds, view_rect.width);
+                        view.scroll.regress(&view.folds, json_rect.width);
                     }
                 }
                 KeyCode::Char('z') => {
@@ -310,9 +328,30 @@ fn run(json_path: String) -> Result<(), io::Error> {
 fn bench(json_path: String) -> Result<(), io::Error> {
     let mut profiler = PROFILER.lock().unwrap();
     profiler.start("profile").unwrap();
-    let f = fs::File::open(json_path)?;
+    let f = fs::File::open(&json_path)?;
     let r = io::BufReader::new(f);
-    let app = App::new(r)?;
+    let initial_layout = JedLayout {
+        left: Rect {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 100,
+        },
+        right: Rect {
+            x: 100,
+            y: 0,
+            width: 100,
+            height: 100,
+        },
+        query: Rect {
+            x: 0,
+            y: 100,
+            width: 100,
+            height: 1,
+        },
+        tree: None,
+    };
+    let mut app = App::new(r, json_path, initial_layout)?;
     std::mem::forget(app);
     profiler.stop().unwrap();
     Ok(())
