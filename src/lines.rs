@@ -34,7 +34,7 @@ impl<'a> Line<'a> {
     // TODO: something less hilariously inefficient
     // TODO: wrapping for non-strings (keys???)
     pub fn render(self, is_cursor: bool, width: u16) -> Spans<'static> {
-        let indent_span = Span::raw("  ".repeat(self.indent as usize));
+        let indent_span = Span::raw(" ".repeat(self.indent as usize));
         let mut out = match &self.key {
             Some(key) => vec![
                 indent_span,
