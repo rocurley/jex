@@ -45,11 +45,8 @@ impl ViewTree {
     pub fn push_trivial_child(&mut self, target_view_rect: Rect) {
         if let View::Json(Some(view)) = &self.view_frame.view {
             let name = "New Query".into();
-            let target_json_rect = Block::default()
-                .borders(Borders::ALL)
-                .inner(target_view_rect);
             let view_frame = ViewFrame {
-                view: View::new(view.values.clone(), target_json_rect),
+                view: View::new(view.values.clone(), target_view_rect),
                 name,
             };
             let child = ViewTree {
@@ -277,10 +274,13 @@ impl JsonView {
             .alignment(Alignment::Left)
         //.wrap(Wrap { trim: false })
     }
-    pub fn apply_query(&self, query: &str, target_rect: Rect) -> View {
+    pub fn apply_query(&self, query: &str, target_view_rect: Rect) -> View {
+        let target_json_rect = Block::default()
+            .borders(Borders::ALL)
+            .inner(target_view_rect);
         match JQ::compile(query) {
             Ok(mut prog) => match run_jq_query(self.values.iter(), &mut prog) {
-                Ok(results) => View::Json(JsonView::new(results, target_rect)),
+                Ok(results) => View::Json(JsonView::new(results, target_json_rect)),
                 Err(err) => View::Error(vec![err]),
             },
             Err(err) => View::Error(err),

@@ -55,18 +55,8 @@ impl<'a> Line<'a> {
                     out.push(Span::raw(","));
                 }
             }
-            LineContent::String(StrLine {
-                raw,
-                is_start,
-                is_end,
-                ..
-            }) => {
-                let quoted = match (is_start, is_end) {
-                    (false, false) => raw.to_string(),
-                    (true, false) => format!("\"{}", raw),
-                    (false, true) => format!("{}\"", raw),
-                    (true, true) => format!("\"{}\"", raw),
-                };
+            LineContent::String(str_line) => {
+                let quoted = str_line.to_string();
                 out.push(Span::styled(quoted, style));
                 if self.comma {
                     // TODO: check if the comma will fit
@@ -136,11 +126,11 @@ fn is_unicode_escaped(c: char) -> bool {
         | GeneralCategory::PrivateUse
         | GeneralCategory::LineSeparator
         | GeneralCategory::ParagraphSeparator
-        | GeneralCategory::SpaceSeparator
         // Combining characters
         | GeneralCategory::SpacingMark
         | GeneralCategory::EnclosingMark
         | GeneralCategory::NonspacingMark => true,
+        GeneralCategory::SpaceSeparator => c != ' ',
         _ => false,
     }
 }
@@ -384,7 +374,7 @@ fn take_width(s: &str, target_width: u16) -> (&str, u16) {
 
 #[cfg(test)]
 mod tests {
-    use super::{display_width, escaped_str, LineCursor};
+    use super::{display_width, escaped_str, LineCursor, StrLine};
     use crate::jq::jv::JVString;
     use proptest::prelude::*;
     use unicode_width::UnicodeWidthStr;
@@ -451,6 +441,23 @@ mod tests {
         ];
         for (string, width) in tests {
             check_lines(&string, width);
+        }
+    }
+    #[test]
+    fn unit_to_string() {
+        let tests = vec![
+            ("", r#""""#),
+            ("Hello world!", r#""Hello world!""#),
+            ("Hello\nworld!", r#""Hello\nworld!""#),
+        ];
+        for (raw, expected) in tests {
+            let line = StrLine {
+                is_start: true,
+                is_end: true,
+                raw,
+                start: 0,
+            };
+            assert_eq!(line.to_string(), expected, "Test failure for {:?}", raw);
         }
     }
 }
