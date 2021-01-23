@@ -221,7 +221,10 @@ fn run(json_path: String) -> Result<(), io::Error> {
                     Err(_) => {}
                 }
             }
-            KeyCode::Char('\t') => app.focus = app.focus.swap(),
+            KeyCode::Tab => {
+                app.focus = app.focus.swap();
+                trace!("Swapped focus to {:?}", app.focus);
+            }
             KeyCode::Char('+') => {
                 if let Focus::Right = app.focus {
                     app.index.parent.push(app.index.child);
@@ -357,7 +360,7 @@ fn bench(json_path: String) -> Result<(), io::Error> {
     Ok(())
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 enum Focus {
     Left,
     Right,
