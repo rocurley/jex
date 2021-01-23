@@ -3,6 +3,13 @@ name = "jex"
 version = "0.1.0"
 authors = ["Roger Curley <rocurley@gmail.com>"]
 edition = "2018"
+license = "MIT"
+description = "jex is a tool for interactively exploring and manipulating json files"
+homepage = "https://github.com/rocurley/jex/tree/master"
+readme = "README.md"
+repository = "https://github.com/rocurley/jex/tree/master"
+keywords = ["json", "jq"]
+categrories = ["command-line-utilities"]
 
 [[bin]]
 name = "jex"
