@@ -449,7 +449,7 @@ mod tests {
     }
     #[test]
     fn unit_folds() {
-        let json_path = "example.json";
+        let json_path = "testdata/example.json";
         let f = fs::File::open(&json_path).unwrap();
         let r = io::BufReader::new(f);
         let jsons: Vec<JV> = Deserializer::from_reader(r)
@@ -475,7 +475,7 @@ mod tests {
     #[test]
     fn unit_scroll_render() {
         simplelog::TestLogger::init(log::LevelFilter::Trace, Default::default()).unwrap();
-        let json_path = "example.json";
+        let json_path = "testdata/example.json";
         let f = fs::File::open(&json_path).unwrap();
         let r = io::BufReader::new(f);
         let jsons: Vec<JV> = Deserializer::from_reader(r)
