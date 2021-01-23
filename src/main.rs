@@ -95,13 +95,6 @@ struct BenchMode {}
 // so that would be pretty evil, but we might be able to operate directly on serde Values.
 //
 // TODO
-// * Long strings
-//   * How this should work exactly is a bit tricky. The cursor serves two purposes: forcing
-//   scrolling and folding values (maybe more things to come). The tricky thing here is that
-//   folding wants to be value-oriented, while scrolling wants to be line-oriented. To reconcile
-//   this, moving up and down will continue to move you to the next value unless the currently
-//   focused value is a long string that extends off the screen in the direction moved. If it is,
-//   moving will instead scroll without changing the focused value.
 // * Long keys: once you can wrap keys across multiple lines, you have the tools to guarantee that
 //   that the content width never falls below 7.
 // * Edit tree:
@@ -111,6 +104,7 @@ struct BenchMode {}
 // * Error messages (no search results, can't fold a leaf, can't edit a non-leaf)
 // * Saving
 // * Rename current view
+// * Diffs
 
 #[cfg(feature = "dev-tools")]
 fn main() -> Result<(), io::Error> {
