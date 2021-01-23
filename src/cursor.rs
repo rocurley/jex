@@ -344,6 +344,8 @@ impl GlobalCursor {
             if lc.current().is_some() {
                 trace!("Advanced global cursor {:#?}", self);
                 return Some(());
+            } else {
+                lc.move_prev();
             }
         }
         self.value_cursor.advance(folds)?;
@@ -361,6 +363,8 @@ impl GlobalCursor {
             lc.move_prev();
             if lc.current().is_some() {
                 return Some(());
+            } else {
+                lc.move_next();
             }
         }
         self.value_cursor.regress(folds)?;
@@ -371,6 +375,16 @@ impl GlobalCursor {
             self.line_cursor = None;
         }
         Some(())
+    }
+    pub fn to_path(&self) -> GlobalPath {
+        let current_line = self.line_cursor.as_ref().map_or(0, |c| {
+            c.current_line()
+                .expect("GlobalCursor should not have invalid LineCursor")
+        });
+        GlobalPath {
+            value_path: self.value_cursor.to_path(),
+            current_line,
+        }
     }
 }
 
@@ -414,14 +428,14 @@ impl ValueCursor {
             focus_position,
         })
     }
-    pub fn to_path(&self) -> Path {
-        Path {
+    pub fn to_path(&self) -> ValuePath {
+        ValuePath {
             top_index: self.top_index,
             frames: self.frames.iter().map(CursorFrame::index).collect(),
             focus_position: self.focus_position,
         }
     }
-    pub fn from_path(jsons: Rc<[JV]>, path: &Path) -> Self {
+    pub fn from_path(jsons: Rc<[JV]>, path: &ValuePath) -> Self {
         let mut focus = jsons[path.top_index].clone();
         let mut frames = Vec::new();
         for &index in path.frames.iter() {
@@ -617,7 +631,7 @@ impl ValueCursor {
         }
     }
     // TODO: do something more efficient
-    pub fn matches_path(&self, path: &Path) -> bool {
+    pub fn matches_path(&self, path: &ValuePath) -> bool {
         self.to_path() == *path
     }
     pub fn regex_matches(&self, re: &Regex) -> bool {
@@ -686,14 +700,14 @@ impl ValueCursor {
 }
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone)]
-pub struct Path {
+pub struct ValuePath {
     top_index: usize,
     frames: Vec<usize>,
     focus_position: FocusPosition,
 }
-impl Path {
+impl ValuePath {
     pub fn strip_position(self) -> (usize, Vec<usize>) {
-        let Path {
+        let ValuePath {
             top_index,
             frames,
             focus_position: _,
@@ -702,12 +716,12 @@ impl Path {
     }
 }
 
-impl PartialOrd for Path {
+impl PartialOrd for ValuePath {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
-impl Ord for Path {
+impl Ord for ValuePath {
     fn cmp(&self, other: &Self) -> Ordering {
         match self.top_index.cmp(&other.top_index) {
             Ordering::Equal => {}
@@ -739,6 +753,12 @@ impl Ord for Path {
             }
         }
     }
+}
+
+#[derive(PartialEq, Eq, Debug, Clone, PartialOrd, Ord)]
+pub struct GlobalPath {
+    pub value_path: ValuePath,
+    pub current_line: usize,
 }
 
 #[cfg(test)]

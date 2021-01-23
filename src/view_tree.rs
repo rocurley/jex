@@ -1,14 +1,15 @@
 use crate::{
-    cursor::{FocusPosition, GlobalCursor, Path, ValueCursor},
+    cursor::{FocusPosition, GlobalCursor, GlobalPath, ValueCursor, ValuePath},
     jq::{
         jv::JV,
         query::{run_jq_query, JQ},
     },
     layout::JedLayout,
+    lines::{Line, LineContent, StrLine},
 };
 use log::trace;
 use serde_json::Deserializer;
-use std::{collections::HashSet, io, ops::RangeInclusive, rc::Rc};
+use std::{collections::HashSet, io, rc::Rc};
 use tui::{
     layout::{Alignment, Rect},
     style::{Color, Style},
@@ -286,13 +287,28 @@ impl JsonView {
             Err(err) => View::Error(err),
         }
     }
-    pub fn visible_range(&self, folds: &HashSet<(usize, Vec<usize>)>) -> RangeInclusive<Path> {
+    fn is_last_line(line: Line) -> bool {
+        match line.content {
+            LineContent::String(StrLine { is_end, .. }) => is_end,
+            _ => true,
+        }
+    }
+    pub fn visible_range(&self, folds: &HashSet<(usize, Vec<usize>)>) -> GlobalPathRange {
         let mut scroll = self.scroll.clone();
-        let first = scroll.value_cursor.to_path();
-        // For side effects! This could be more efficient...
-        scroll.render_lines(Some(&self.cursor), folds, self.rect);
-        let last = scroll.value_cursor.to_path();
-        first..=last
+        let start = scroll.to_path();
+        let mut end_is_line_end = Self::is_last_line(scroll.current_line(folds, self.rect.width));
+        for _ in 1..self.rect.height {
+            if let None = scroll.advance(folds, self.rect.width) {
+                break;
+            };
+            end_is_line_end = Self::is_last_line(scroll.current_line(folds, self.rect.width));
+        }
+        let end = scroll.to_path();
+        GlobalPathRange {
+            start,
+            end,
+            end_is_last_line: end_is_line_end,
+        }
     }
     pub fn unfold_around_cursor(&mut self) {
         let mut path = self.cursor.to_path().strip_position();
@@ -322,6 +338,60 @@ impl JsonView {
                 };
             }
         }
+    }
+    pub fn advance_cursor(&mut self) {
+        let visible_range = self.visible_range(&self.folds);
+        let cursor_path = self.cursor.to_path();
+        if !visible_range.contains_value_end(&cursor_path) {
+            self.scroll.advance(&self.folds, self.rect.width);
+            return;
+        }
+        self.cursor.advance(&self.folds);
+        if !visible_range.contains_value(&cursor_path) {
+            self.scroll.advance(&self.folds, self.rect.width);
+        }
+    }
+    pub fn regress_cursor(&mut self) {
+        let visible_range = self.visible_range(&self.folds);
+        let cursor_path = self.cursor.to_path();
+        if !visible_range.contains_value_start(&cursor_path) {
+            self.scroll.regress(&self.folds, self.rect.width);
+            return;
+        }
+        self.cursor.regress(&self.folds);
+        if !visible_range.contains_value(&cursor_path) {
+            self.scroll.regress(&self.folds, self.rect.width);
+        }
+    }
+}
+
+pub struct GlobalPathRange {
+    start: GlobalPath,
+    end: GlobalPath,
+    end_is_last_line: bool,
+}
+
+impl GlobalPathRange {
+    pub fn contains_value(&self, path: &ValuePath) -> bool {
+        (&self.start.value_path..=&self.end.value_path).contains(&path)
+    }
+    pub fn contains_value_start(&self, path: &ValuePath) -> bool {
+        if !self.contains_value(path) {
+            return false;
+        }
+        if *path != self.start.value_path {
+            return true;
+        }
+        self.start.current_line == 0
+    }
+    pub fn contains_value_end(&self, path: &ValuePath) -> bool {
+        if !self.contains_value(path) {
+            return false;
+        }
+        if *path != self.end.value_path {
+            return true;
+        }
+        self.end_is_last_line
     }
 }
 

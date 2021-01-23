@@ -207,14 +207,14 @@ impl<'a> StrLine<'a> {
     }
 }
 
-#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+#[derive(PartialEq, Eq, Debug, Clone, Copy, PartialOrd, Ord)]
 enum LineCursorPosition {
     Start,
-    End,
     Valid {
         start: usize, // bytes
         current_line: usize,
     },
+    End,
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]

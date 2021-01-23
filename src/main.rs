@@ -264,58 +264,49 @@ fn run(json_path: String) -> Result<(), io::Error> {
         match &mut view_frame.view {
             View::Error(_) => {}
             View::Json(None) => {}
-            View::Json(Some(view)) => match c.code {
-                KeyCode::Down => {
-                    view.cursor.advance(&view.folds);
-                    if !view
-                        .visible_range(&view.folds)
-                        .contains(&view.cursor.to_path())
-                    {
-                        view.scroll.advance(&view.folds, json_rect.width);
+            View::Json(Some(view)) => {
+                assert_eq!(json_rect, view.rect);
+                match c.code {
+                    KeyCode::Down => {
+                        view.advance_cursor();
                     }
-                }
-                KeyCode::Up => {
-                    view.cursor.regress(&view.folds);
-                    if !view
-                        .visible_range(&view.folds)
-                        .contains(&view.cursor.to_path())
-                    {
-                        view.scroll.regress(&view.folds, json_rect.width);
+                    KeyCode::Up => {
+                        view.regress_cursor();
                     }
-                }
-                KeyCode::Char('z') => {
-                    view.toggle_fold();
-                }
-                KeyCode::Char('/') => {
-                    terminal.draw(app.render(AppRenderMode::InputEditor))?;
-                    match search_rl.readline_with_initial("Search:", ("", "")) {
-                        Ok(new_search) => {
-                            // Just in case rustyline messed stuff up
-                            force_draw(&mut terminal, app.render(AppRenderMode::Normal))?;
-                            app.search_re = Regex::new(new_search.as_ref()).ok();
-                            app.search(false);
+                    KeyCode::Char('z') => {
+                        view.toggle_fold();
+                    }
+                    KeyCode::Char('/') => {
+                        terminal.draw(app.render(AppRenderMode::InputEditor))?;
+                        match search_rl.readline_with_initial("Search:", ("", "")) {
+                            Ok(new_search) => {
+                                // Just in case rustyline messed stuff up
+                                force_draw(&mut terminal, app.render(AppRenderMode::Normal))?;
+                                app.search_re = Regex::new(new_search.as_ref()).ok();
+                                app.search(false);
+                            }
+                            Err(_) => {}
                         }
-                        Err(_) => {}
                     }
-                }
-                KeyCode::Char('n') => {
-                    app.search(false);
-                }
-                KeyCode::Char('N') => {
-                    app.search(true);
-                }
-                KeyCode::Home => {
-                    view.scroll = GlobalCursor::new(view.values.clone(), view.rect.width)
-                        .expect("values should still exist");
-                    view.cursor = view.scroll.value_cursor.clone();
-                }
-                KeyCode::End => {
-                    view.scroll = GlobalCursor::new_end(view.values.clone(), view.rect.width)
-                        .expect("values should still exist");
-                    view.cursor = view.scroll.value_cursor.clone();
-                }
-                _ => {}
-            },
+                    KeyCode::Char('n') => {
+                        app.search(false);
+                    }
+                    KeyCode::Char('N') => {
+                        app.search(true);
+                    }
+                    KeyCode::Home => {
+                        view.scroll = GlobalCursor::new(view.values.clone(), view.rect.width)
+                            .expect("values should still exist");
+                        view.cursor = view.scroll.value_cursor.clone();
+                    }
+                    KeyCode::End => {
+                        view.scroll = GlobalCursor::new_end(view.values.clone(), view.rect.width)
+                            .expect("values should still exist");
+                        view.cursor = view.scroll.value_cursor.clone();
+                    }
+                    _ => {}
+                };
+            }
         }
         terminal.draw(app.render(AppRenderMode::Normal))?;
     }
@@ -516,7 +507,7 @@ impl App {
         view.unfold_around_cursor();
         if !view
             .visible_range(&view.folds)
-            .contains(&view.cursor.to_path())
+            .contains_value(&view.cursor.to_path())
         {
             view.scroll = GlobalCursor::new(view.values.clone(), view.rect.width)
                 .expect("values should still exist");
