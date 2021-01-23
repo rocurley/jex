@@ -142,15 +142,18 @@ impl JVRaw {
         unsafe { jv_number_value(self.ptr) }
     }
     pub fn string_value(&self) -> &str {
-        let slice = unsafe {
+        unsafe {
             let string_ptr = jv_string_value(self.ptr) as *const u8;
             let len = jv_string_length_bytes(self.clone().unwrap_without_drop());
-            slice::from_raw_parts(
+            let slice = slice::from_raw_parts(
                 string_ptr,
                 len.try_into().expect("length cannot be parsed as usize"),
-            )
-        };
-        str::from_utf8(slice).expect("JQ strings are supposed to be UTF-8")
+            );
+            // Safety: JQ guarantees that strings are utf8. Not checking here is extremely
+            // important from a performance perspective: we regularly call string_value, and need
+            // it to be a constant-time operation.
+            str::from_utf8_unchecked(slice)
+        }
     }
     pub fn object_len(&self) -> i32 {
         unsafe { jv_object_length(self.clone().unwrap_without_drop()) }

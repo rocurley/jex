@@ -183,7 +183,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
     let stdout = io::stdout();
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-    let initial_layout = JedLayout::new(&terminal.get_frame(), false);
+    let initial_layout = JedLayout::new(terminal.get_frame().size(), false);
     let mut app = App::new(r, json_path, initial_layout)?;
     terminal.draw(app.render(AppRenderMode::Normal))?;
     let mut query_rl: rustyline::Editor<()> = rustyline::Editor::new();
@@ -193,7 +193,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
     search_rl.bind_sequence(rustyline::KeyPress::Esc, rustyline::Cmd::Interrupt);
     title_rl.bind_sequence(rustyline::KeyPress::Esc, rustyline::Cmd::Interrupt);
     loop {
-        let layout = JedLayout::new(&terminal.get_frame(), app.show_tree);
+        let layout = JedLayout::new(terminal.get_frame().size(), app.show_tree);
         let event = event::read().expect("Error getting next event");
         let c = match event {
             event::Event::Key(c) => c,

@@ -97,7 +97,7 @@ impl App {
         let App { focus, .. } = self;
         let (left, right, query) = self.current_views();
         move |f| {
-            let layout = JedLayout::new(f, self.show_tree);
+            let layout = JedLayout::new(f.size(), self.show_tree);
             let left_block = Block::default()
                 .title(left.name.to_owned())
                 .borders(Borders::ALL);
