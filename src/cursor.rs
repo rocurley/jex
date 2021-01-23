@@ -319,9 +319,7 @@ impl GlobalCursor {
         rect: Rect,
     ) -> Vec<Spans<'static>> {
         let mut lines = Vec::with_capacity(rect.height as usize);
-        if let Some(c) = self.line_cursor.as_mut() {
-            c.set_width(self.value_cursor.content_width(rect.width));
-        }
+        self.resize_to(rect);
         lines.push(
             self.current_line(folds, rect.width)
                 .render(Some(&self.value_cursor) == cursor, rect.width),
@@ -384,6 +382,11 @@ impl GlobalCursor {
         GlobalPath {
             value_path: self.value_cursor.to_path(),
             current_line,
+        }
+    }
+    pub fn resize_to(&mut self, rect: Rect) {
+        if let Some(lc) = self.line_cursor.as_mut() {
+            lc.set_width(rect.width);
         }
     }
 }

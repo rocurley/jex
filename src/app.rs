@@ -3,6 +3,7 @@ use crate::{
     layout::JedLayout,
     view_tree::{View, ViewFrame, ViewTree, ViewTreeIndex},
 };
+use log::debug;
 use regex::Regex;
 use std::{default::Default, io};
 use tui::{
@@ -171,5 +172,11 @@ impl App {
             view.scroll = GlobalCursor::new(view.values.clone(), view.rect.width)
                 .expect("values should still exist");
         }
+    }
+    pub fn resize(&mut self, layout: JedLayout) {
+        debug!("Resizing to new layout: {:?}", layout);
+        let (left, right, _) = self.current_views_mut();
+        left.view.resize_to(layout.left);
+        right.view.resize_to(layout.right);
     }
 }

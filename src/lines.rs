@@ -355,7 +355,37 @@ impl LineCursor {
         out
     }
     pub fn set_width(&mut self, width: u16) {
-        assert_eq!(self.width, width);
+        if self.width == width {
+            return;
+        }
+        match self.position {
+            LineCursorPosition::Start => {
+                *self = LineCursor::new_at_start(self.value.clone(), width);
+                self.move_prev();
+            }
+            LineCursorPosition::End => {
+                *self = LineCursor::new_at_end(self.value.clone(), width);
+                self.move_next();
+            }
+            LineCursorPosition::Valid { start: target, .. } => {
+                *self = LineCursor::new_at_start(self.value.clone(), width);
+                loop {
+                    match self.position {
+                        LineCursorPosition::Start => {
+                            panic!("Shouldn't be able to reach start by advancing")
+                        }
+                        LineCursorPosition::End => break,
+                        LineCursorPosition::Valid { start, .. } => {
+                            if start > target {
+                                break;
+                            }
+                            self.move_next();
+                        }
+                    }
+                }
+                self.move_prev();
+            }
+        }
     }
 }
 

@@ -239,6 +239,15 @@ impl View {
             }
         }
     }
+    pub fn resize_to(&mut self, view_rect: Rect) {
+        match self {
+            View::Json(Some(v)) => {
+                let json_rect = Block::default().borders(Borders::ALL).inner(view_rect);
+                v.resize_to(json_rect);
+            }
+            _ => {}
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -364,7 +373,8 @@ impl JsonView {
         }
     }
     pub fn resize_to(&mut self, json_rect: Rect) {
-        assert_eq!(json_rect, self.rect);
+        self.rect = json_rect;
+        self.scroll.resize_to(json_rect);
     }
 }
 

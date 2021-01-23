@@ -11,12 +11,13 @@ use jed::{
     layout::JedLayout,
     view_tree::View,
 };
-use log::trace;
+use log::debug;
 use regex::Regex;
 use simplelog::WriteLogger;
 use std::{default::Default, fs, fs::File, io, io::Write, panic};
 use tui::{
     backend::CrosstermBackend,
+    layout::Rect,
     widgets::{Block, Borders},
     Frame, Terminal,
 };
@@ -193,16 +194,25 @@ fn run(json_path: String) -> Result<(), io::Error> {
     search_rl.bind_sequence(rustyline::KeyPress::Esc, rustyline::Cmd::Interrupt);
     title_rl.bind_sequence(rustyline::KeyPress::Esc, rustyline::Cmd::Interrupt);
     loop {
-        let layout = JedLayout::new(terminal.get_frame().size(), app.show_tree);
         let event = event::read().expect("Error getting next event");
+        debug!("Event: {:?}", event);
         let c = match event {
             event::Event::Key(c) => c,
             event::Event::Mouse(_) => panic!("Mouse events aren't enabled!"),
-            event::Event::Resize(_, _) => {
+            event::Event::Resize(width, height) => {
+                let rect = Rect {
+                    x: 0,
+                    y: 0,
+                    width,
+                    height,
+                };
+                let layout = JedLayout::new(rect, app.show_tree);
+                app.resize(layout);
+                terminal.draw(app.render(AppRenderMode::Normal))?;
                 continue;
             }
         };
-        trace!("Keypress: {:?}", c);
+        let layout = JedLayout::new(terminal.get_frame().size(), app.show_tree);
         match c.code {
             KeyCode::Esc => break,
             KeyCode::Char('t') => {
@@ -223,7 +233,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
             }
             KeyCode::Tab => {
                 app.focus = app.focus.swap();
-                trace!("Swapped focus to {:?}", app.focus);
+                debug!("Swapped focus to {:?}", app.focus);
             }
             KeyCode::Char('+') => {
                 if let Focus::Right = app.focus {
