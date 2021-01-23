@@ -1,9 +1,8 @@
 use cpuprofiler::PROFILER;
 use criterion::{criterion_group, criterion_main, Criterion};
-use jed::{
-    jq::{jv::JV, run_jq_query, JQ},
-    shadow_tree,
-    shadow_tree::construct_shadow_tree,
+use jed::jq::{
+    jv::JV,
+    query::{run_jq_query, JQ},
 };
 use serde_json::{value::Value, Deserializer};
 use std::{fs, io, path::Path};
@@ -18,31 +17,6 @@ fn bench_jq_roundtrip(c: &mut Criterion) {
             .collect::<Result<Vec<JV>, _>>()
             .expect("serde deserialization error");
         bench.iter(|| run_jq_query(&content, &mut prog))
-    });
-}
-
-fn bench_render_preprocessing(c: &mut Criterion) {
-    c.bench_function("render_preprocessing", |bench| {
-        let f = fs::File::open("example.json").expect("cannot open file");
-        let r = io::BufReader::new(f);
-        let content: Vec<JV> = Deserializer::from_reader(r)
-            .into_iter::<JV>()
-            .collect::<Result<Vec<JV>, _>>()
-            .expect("serde deserialization error");
-        bench.iter(|| construct_shadow_tree(&content))
-    });
-}
-
-fn bench_render(c: &mut Criterion) {
-    c.bench_function("render", |bench| {
-        let f = fs::File::open("citylots.json").expect("cannot open file");
-        let r = io::BufReader::new(f);
-        let content: Vec<JV> = Deserializer::from_reader(r)
-            .into_iter::<JV>()
-            .collect::<Result<Vec<JV>, _>>()
-            .expect("serde deserialization error");
-        let shadow_tree = construct_shadow_tree(&content);
-        bench.iter(|| shadow_tree::render_lines(3, 10, Some(5), &shadow_tree, &content))
     });
 }
 
@@ -103,8 +77,6 @@ criterion_group!(
     config = profiled();
     targets =
         bench_jq_roundtrip,
-        bench_render_preprocessing,
-        bench_render,
         bench_load_direct,
         bench_load_indirect,
         bench_load_native,
