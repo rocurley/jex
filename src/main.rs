@@ -265,7 +265,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
             View::Error(_) => {}
             View::Json(None) => {}
             View::Json(Some(view)) => {
-                assert_eq!(json_rect, view.rect);
+                view.resize_to(json_rect);
                 match c.code {
                     KeyCode::Down => {
                         view.advance_cursor();

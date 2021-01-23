@@ -363,6 +363,9 @@ impl JsonView {
             self.scroll.regress(&self.folds, self.rect.width);
         }
     }
+    pub fn resize_to(&mut self, json_rect: Rect) {
+        assert_eq!(json_rect, self.rect);
+    }
 }
 
 pub struct GlobalPathRange {
