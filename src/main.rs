@@ -5,10 +5,10 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use jed::{
+use jex::{
     app::{App, AppRenderMode, Focus},
     cursor::GlobalCursor,
-    layout::JedLayout,
+    layout::JexLayout,
     view_tree::View,
 };
 use log::debug;
@@ -178,7 +178,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
     let stdout = io::stdout();
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-    let initial_layout = JedLayout::new(terminal.get_frame().size(), false);
+    let initial_layout = JexLayout::new(terminal.get_frame().size(), false);
     let mut app = App::new(r, json_path, initial_layout)?;
     terminal.draw(app.render(AppRenderMode::Normal))?;
     let mut query_rl: rustyline::Editor<()> = rustyline::Editor::new();
@@ -200,13 +200,13 @@ fn run(json_path: String) -> Result<(), io::Error> {
                     width,
                     height,
                 };
-                let layout = JedLayout::new(rect, app.show_tree);
+                let layout = JexLayout::new(rect, app.show_tree);
                 app.resize(layout);
                 terminal.draw(app.render(AppRenderMode::Normal))?;
                 continue;
             }
         };
-        let layout = JedLayout::new(terminal.get_frame().size(), app.show_tree);
+        let layout = JexLayout::new(terminal.get_frame().size(), app.show_tree);
         match c.code {
             KeyCode::Esc => break,
             KeyCode::Char('t') => {
@@ -328,7 +328,7 @@ fn bench(json_path: String) -> Result<(), io::Error> {
     profiler.start("profile").unwrap();
     let f = fs::File::open(&json_path)?;
     let r = io::BufReader::new(f);
-    let initial_layout = JedLayout {
+    let initial_layout = JexLayout {
         left: Rect {
             x: 0,
             y: 0,

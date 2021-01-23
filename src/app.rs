@@ -1,6 +1,6 @@
 use crate::{
     cursor::GlobalCursor,
-    layout::JedLayout,
+    layout::JexLayout,
     view_tree::{View, ViewFrame, ViewTree, ViewTreeIndex},
 };
 use log::debug;
@@ -40,7 +40,7 @@ impl Focus {
 }
 
 impl App {
-    pub fn new<R: io::Read>(r: R, name: String, layout: JedLayout) -> io::Result<Self> {
+    pub fn new<R: io::Read>(r: R, name: String, layout: JexLayout) -> io::Result<Self> {
         let views = ViewTree::new_from_reader(r, name, layout)?;
         let index = ViewTreeIndex {
             parent: Vec::new(),
@@ -98,7 +98,7 @@ impl App {
         let App { focus, .. } = self;
         let (left, right, query) = self.current_views();
         move |f| {
-            let layout = JedLayout::new(f.size(), self.show_tree);
+            let layout = JexLayout::new(f.size(), self.show_tree);
             let left_block = Block::default()
                 .title(left.name.to_owned())
                 .borders(Borders::ALL);
@@ -173,7 +173,7 @@ impl App {
                 .expect("values should still exist");
         }
     }
-    pub fn resize(&mut self, layout: JedLayout) {
+    pub fn resize(&mut self, layout: JexLayout) {
         debug!("Resizing to new layout: {:?}", layout);
         let (left, right, _) = self.current_views_mut();
         left.view.resize_to(layout.left);

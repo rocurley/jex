@@ -4,7 +4,7 @@ use crate::{
         jv::JV,
         query::{run_jq_query, JQ},
     },
-    layout::JedLayout,
+    layout::JexLayout,
     lines::{Line, LineContent, StrLine},
 };
 use log::trace;
@@ -30,7 +30,7 @@ pub struct ViewFrame {
 }
 
 impl ViewTree {
-    pub fn new_from_reader<R: io::Read>(r: R, name: String, layout: JedLayout) -> io::Result<Self> {
+    pub fn new_from_reader<R: io::Read>(r: R, name: String, layout: JexLayout) -> io::Result<Self> {
         let content: Vec<JV> = Deserializer::from_reader(r)
             .into_iter::<JV>()
             .collect::<Result<Vec<JV>, _>>()?;

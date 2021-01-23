@@ -1,12 +1,12 @@
 use cpuprofiler::PROFILER;
 use criterion::{criterion_group, criterion_main, Criterion};
-use jed::{
+use jex::{
     app::App,
     jq::{
         jv::JV,
         query::{run_jq_query, JQ},
     },
-    layout::JedLayout,
+    layout::JexLayout,
     view_tree::View,
 };
 use serde_json::{value::Value, Deserializer};
@@ -66,7 +66,7 @@ fn bench_scroll_long_string(c: &mut Criterion) {
         let f = fs::File::open(&path).expect("couldn't open test file");
         let r = io::BufReader::new(f);
         let rect = Rect::new(0, 0, 100, 100);
-        let initial_layout = JedLayout::new(rect, false);
+        let initial_layout = JexLayout::new(rect, false);
         let mut app =
             App::new(r, path.to_string(), initial_layout).expect("couldn't initalize app");
         let view = if let View::Json(Some(view)) = &mut app.focused_view_mut().view {

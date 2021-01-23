@@ -1,11 +1,11 @@
 [package]
-name = "jed"
+name = "jex"
 version = "0.1.0"
 authors = ["Roger Curley <rocurley@gmail.com>"]
 edition = "2018"
 
 [[bin]]
-name = "jed"
+name = "jex"
 path = "src/main.rs"
 bench = false
 
