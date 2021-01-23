@@ -1,3 +1,4 @@
+pub mod app;
 pub mod cursor;
 pub mod jq;
 pub mod layout;
