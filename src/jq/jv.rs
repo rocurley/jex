@@ -2,7 +2,8 @@ use super::jv_raw::{JVKind, JVRaw};
 pub use super::jv_raw::{ObjectIterator, ObjectValuesIterator, OwnedObjectIterator};
 use serde::{
     de::{MapAccess, SeqAccess, Visitor},
-    Deserialize,
+    ser::{SerializeMap, SerializeSeq},
+    Deserialize, Serialize, Serializer,
 };
 use serde_json::value::Value;
 use std::{
@@ -365,6 +366,34 @@ impl<'de> Deserialize<'de> for JV {
     }
 }
 
+impl Serialize for JV {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            JV::Null(_) => serializer.serialize_none(),
+            JV::Bool(b) => serializer.serialize_bool(b.value()),
+            JV::Number(x) => serializer.serialize_f64(x.value()),
+            JV::String(s) => serializer.serialize_str(s.value()),
+            JV::Array(arr) => {
+                let mut seq = serializer.serialize_seq(Some(arr.len() as usize))?;
+                for x in arr.iter() {
+                    seq.serialize_element(&x)?;
+                }
+                seq.end()
+            }
+            JV::Object(obj) => {
+                let mut map = serializer.serialize_map(Some(obj.len() as usize))?;
+                for (k, v) in obj.iter() {
+                    map.serialize_entry(&k, &v)?;
+                }
+                map.end()
+            }
+        }
+    }
+}
+
 impl JV {
     pub fn parse_native(s: &str) -> Result<Self, String> {
         JVRaw::parse_native(s).try_into()
@@ -420,6 +449,21 @@ mod tests {
             let via_jv: Value = (&jv).try_into().unwrap();
             let via_str: Value = serde_json::from_str(&s)?;
             assert_eq!(via_jv, via_str);
+        }
+    }
+    proptest! {
+        #[test]
+        fn prop_jv_serialize(value in arb_json()) {
+            let jv :JV = (&value).into();
+            let s1 = serde_json::to_string(&jv)?;
+            let s2 = serde_json::to_string(&value)?;
+            assert_eq!(s1, s2);
+            // Distressingly, serde doesn't actually pass the roundtrip test. Gonna let this one go
+            // for now.
+            /*
+            let via_ser: Value = serde_json::from_str(&s2)?;
+            assert_eq!(value, via_ser, "String was : {:?}", s2);
+            */
         }
     }
 }
