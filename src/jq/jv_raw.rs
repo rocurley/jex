@@ -1,4 +1,4 @@
-use super::jv::JV;
+use super::jv::{JVString, JV};
 use jq_sys::{
     jv, jv_array, jv_array_get, jv_array_length, jv_array_set, jv_bool, jv_copy, jv_equal, jv_free,
     jv_get_kind, jv_invalid_get_msg, jv_invalid_has_msg, jv_kind_JV_KIND_ARRAY,
@@ -242,7 +242,7 @@ pub struct ObjectIterator<'a> {
 }
 
 impl<'a> Iterator for ObjectIterator<'a> {
-    type Item = (String, JV);
+    type Item = (&'a str, JV);
     fn next(&mut self) -> Option<Self::Item> {
         if unsafe { jv_object_iter_valid(self.obj.ptr, self.i) } == 0 {
             return None;
@@ -259,7 +259,10 @@ impl<'a> Iterator for ObjectIterator<'a> {
         self.i = unsafe { jv_object_iter_next(self.obj.ptr, self.i) };
         self.remaining -= 1;
         Some((
-            k.string_value().to_owned(),
+            // Safety: While k will be dropped at the end of this function call, at least one copy
+            // of it will remain as a part of obj as long as obj lives. As such, it's safe to cast
+            // the lifetime to 'a.
+            unsafe { std::mem::transmute(k.string_value()) },
             v.try_into().expect("Object should not contain invalid JV"),
         ))
     }
@@ -278,15 +281,17 @@ pub struct OwnedObjectIterator {
 }
 
 impl Iterator for OwnedObjectIterator {
-    type Item = (String, JV);
+    // Returning a JVString is the only way we can avoid copying. &str is impossible because that
+    // would require borrowing from the iterator.
+    type Item = (JVString, JV);
     fn next(&mut self) -> Option<Self::Item> {
         if unsafe { jv_object_iter_valid(self.obj.ptr, self.i) } == 0 {
             return None;
         }
-        let k = JVRaw {
+        let k_raw = JVRaw {
             ptr: unsafe { jv_object_iter_key(self.obj.ptr, self.i) },
         };
-        let v = JVRaw {
+        let v_raw = JVRaw {
             ptr: unsafe { jv_object_iter_value(self.obj.ptr, self.i) },
         };
         // If we wanted to live dangerously, we could say something like this:
@@ -294,9 +299,16 @@ impl Iterator for OwnedObjectIterator {
         // so we can return a &'a str. That's too spooky for now though.
         self.i = unsafe { jv_object_iter_next(self.obj.ptr, self.i) };
         self.remaining -= 1;
+        let k = if let Ok(JV::String(k)) = k_raw.try_into() {
+            k
+        } else {
+            panic!("Object keys must be strings");
+        };
         Some((
-            k.string_value().into(),
-            v.try_into().expect("Object should not contain invalid JV"),
+            k,
+            v_raw
+                .try_into()
+                .expect("Object should not contain invalid JV"),
         ))
     }
     fn size_hint(&self) -> (usize, Option<usize>) {

@@ -152,7 +152,7 @@ impl JVObject {
     }
 }
 impl std::iter::IntoIterator for JVObject {
-    type Item = (String, JV);
+    type Item = (JVString, JV);
     type IntoIter = OwnedObjectIterator;
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_object_iter()

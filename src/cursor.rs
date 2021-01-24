@@ -1,5 +1,5 @@
 use crate::{
-    jq::jv::{JVArray, JVObject, OwnedObjectIterator, JV},
+    jq::jv::{JVArray, JVObject, JVString, OwnedObjectIterator, JV},
     lines::{escaped_str, Line, LineContent, LineCursor},
 };
 use log::trace;
@@ -46,7 +46,7 @@ pub enum CursorFrame {
     },
     Object {
         index: usize,
-        key: String,
+        key: JVString,
         json: JVObject,
         iterator: OwnedObjectIterator,
     },
@@ -481,7 +481,7 @@ impl ValueCursor {
             _ => match self.frames.last() {
                 None => None,
                 Some(CursorFrame::Array { .. }) => None,
-                Some(CursorFrame::Object { key, .. }) => Some(key),
+                Some(CursorFrame::Object { key, .. }) => Some(key.value()),
             },
         }
     }
@@ -644,7 +644,7 @@ impl ValueCursor {
             }
         }
         if let Some(CursorFrame::Object { key, .. }) = self.frames.last() {
-            if re.is_match(key) {
+            if re.is_match(key.value()) {
                 return true;
             }
         }
