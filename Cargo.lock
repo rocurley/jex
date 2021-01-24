@@ -447,12 +447,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ego-tree"
-version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a68a4904193147e0a8dec3314640e6db742afd5f6e634f428a6af230d9b3591"
-
-[[package]]
 name = "either"
 version = "1.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -545,7 +539,6 @@ dependencies = [
  "cpuprofiler",
  "criterion",
  "crossterm",
- "ego-tree",
  "jq-sys",
  "log",
  "pretty_assertions",
