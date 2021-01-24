@@ -217,6 +217,19 @@ fn run(json_path: String) -> Result<(), io::Error> {
             }
         };
         let layout = JexLayout::new(terminal.get_frame().size(), app.show_tree);
+        if app.flash.is_some() {
+            match c.code {
+                KeyCode::Esc => {
+                    app.flash = None;
+                    terminal.draw(app.render(AppRenderMode::Normal))?;
+                    continue;
+                }
+                _ => {
+                    terminal.draw(app.render(AppRenderMode::Normal))?;
+                    continue;
+                }
+            }
+        }
         match c.code {
             KeyCode::Esc => break,
             KeyCode::Char('t') => {
@@ -273,7 +286,9 @@ fn run(json_path: String) -> Result<(), io::Error> {
                 if let View::Json(Some(view)) = &view_frame.view {
                     match title_rl.readline_with_initial("Save to:", (&view_frame.name, "")) {
                         Ok(path) => {
-                            view.save_to(&path);
+                            if let Err(err) = view.save_to(&path) {
+                                app.set_flash(format!("Error saving json:\n{:?}", err));
+                            }
                         }
                         Err(_) => {}
                     }

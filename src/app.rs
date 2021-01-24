@@ -1,6 +1,6 @@
 use crate::{
     cursor::GlobalCursor,
-    layout::JexLayout,
+    layout::{self, JexLayout},
     view_tree::{View, ViewFrame, ViewTree, ViewTreeIndex},
 };
 use log::debug;
@@ -8,7 +8,8 @@ use regex::Regex;
 use std::{default::Default, io};
 use tui::{
     layout::{Alignment, Rect},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    text::Text,
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
 };
 pub struct App {
@@ -17,6 +18,7 @@ pub struct App {
     pub focus: Focus,
     pub search_re: Option<Regex>,
     pub show_tree: bool,
+    pub flash: Option<Paragraph<'static>>,
 }
 
 pub enum AppRenderMode {
@@ -52,6 +54,7 @@ impl App {
             focus: Focus::Left,
             search_re: None,
             show_tree: false,
+            flash: None,
         };
         Ok(app)
     }
@@ -98,7 +101,8 @@ impl App {
         let App { focus, .. } = self;
         let (left, right, query) = self.current_views();
         move |f| {
-            let layout = JexLayout::new(f.size(), self.show_tree);
+            let size = f.size();
+            let layout = JexLayout::new(size, self.show_tree);
             let left_block = Block::default()
                 .title(left.name.to_owned())
                 .borders(Borders::ALL);
@@ -132,6 +136,12 @@ impl App {
                 AppRenderMode::InputEditor => {
                     f.set_cursor(0, layout.query.y);
                 }
+            }
+            if let Some(flash) = self.flash.as_ref() {
+                let area = layout::flash(size);
+                f.render_widget(Clear, area);
+                let block = Block::default().borders(Borders::ALL);
+                f.render_widget(flash.clone().block(block), area);
             }
         }
     }
@@ -178,5 +188,8 @@ impl App {
         let (left, right, _) = self.current_views_mut();
         left.view.resize_to(layout.left);
         right.view.resize_to(layout.right);
+    }
+    pub fn set_flash(&mut self, s: String) {
+        self.flash = Some(Paragraph::new(Text::from(s)));
     }
 }

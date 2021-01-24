@@ -42,3 +42,23 @@ impl JexLayout {
         }
     }
 }
+
+pub fn flash(size: Rect) -> Rect {
+    let v_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Ratio(1, 4),
+            Constraint::Ratio(1, 2),
+            Constraint::Ratio(1, 4),
+        ])
+        .split(size);
+    let h_layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Ratio(1, 4),
+            Constraint::Ratio(1, 2),
+            Constraint::Ratio(1, 4),
+        ])
+        .split(v_layout[1]);
+    h_layout[1]
+}
