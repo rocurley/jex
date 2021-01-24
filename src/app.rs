@@ -12,13 +12,21 @@ use tui::{
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
 };
+
+const README: &str = include_str!("../README.md");
+
 pub struct App {
     pub views: ViewTree,
     pub index: ViewTreeIndex,
     pub focus: Focus,
     pub search_re: Option<Regex>,
     pub show_tree: bool,
-    pub flash: Option<Paragraph<'static>>,
+    pub flash: Option<Flash>,
+}
+
+pub struct Flash {
+    pub paragraph: Paragraph<'static>,
+    pub scroll: u16,
 }
 
 pub enum AppRenderMode {
@@ -140,8 +148,17 @@ impl App {
             if let Some(flash) = self.flash.as_ref() {
                 let area = layout::flash(size);
                 f.render_widget(Clear, area);
-                let block = Block::default().borders(Borders::ALL);
-                f.render_widget(flash.clone().block(block), area);
+                let block = Block::default()
+                    .title("Press ESC to close popup")
+                    .borders(Borders::ALL);
+                f.render_widget(
+                    flash
+                        .paragraph
+                        .clone()
+                        .scroll((flash.scroll, 0))
+                        .block(block),
+                    area,
+                );
             }
         }
     }
@@ -190,6 +207,19 @@ impl App {
         right.view.resize_to(layout.right);
     }
     pub fn set_flash(&mut self, s: String) {
-        self.flash = Some(Paragraph::new(Text::from(s)));
+        self.flash = Some(Flash {
+            paragraph: Paragraph::new(Text::from(s)).wrap(Wrap { trim: false }),
+            scroll: 0,
+        });
+    }
+    pub fn show_help(&mut self) {
+        let controls = README
+            .rsplit("<!-- START CONTROLS POPUP -->\n")
+            .next()
+            .unwrap()
+            .split("<!-- END CONTROLS POPUP -->")
+            .next()
+            .unwrap();
+        self.set_flash(controls.to_string());
     }
 }

@@ -18,17 +18,21 @@ Use
 
 Once you've installed jex, you can use it to open a json file by running `jex example.json`. You can control jex using the following keys:
 
-- Up/down: scroll through the current pane
-- Tab: switch the active pane
-- z: fold the object or array under the cursor
-- q: Open the query editor. Type a JQ query, and press Enter to execute it against the left pane, and storing the result in the right pane.
-- /: search
-- n: next search result
-- N: prior search result
-- t: toggle visibility of the edit tree
-- j/k: scroll through the edit tree
-- +: add a new child to the selected view
-- r: rename the current view
-- Home: go to the top
-- End: go to the bottom
-- Esc: quit jex (or leave the query editor)
+<!-- START CONTROLS POPUP -->
+- Up/down: Scroll through the current pane
+- Tab: Switch the active pane
+- z: Fold the object or array under the cursor
+- q: Open the query editor. Type a JQ query, and press Enter to execute it against the left pane, storing the result in the right pane.
+- /: Search
+- n: Next search result
+- N: Prior search result
+- t: Toggle visibility of the edit tree
+- j/k: Scroll through the edit tree
+- +: Add a new child to the selected view
+- r: Rename the current view
+- s: Save the current view
+- Home: Scroll to the top
+- End: Scroll to the bottom
+- Esc: Quit jex (or leave the query editor)
+- h,? or F1: Show this help text
+<!-- END CONTROLS POPUP -->

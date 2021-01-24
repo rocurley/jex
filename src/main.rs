@@ -101,9 +101,7 @@ struct BenchMode {}
 //   * Children can be modified if they have no children
 //   * Allow copying descendents onto another root, so you if you want to modify a tree's root you
 // can do so by making a new root and then copying over the descendents
-// * Error messages (no search results, can't fold a leaf, can't edit a non-leaf)
-// * Saving
-// * Rename current view
+// * Lightweight error messages (no search results, can't fold a leaf, can't edit a non-leaf)
 // * Diffs
 
 #[cfg(feature = "dev-tools")]
@@ -217,18 +215,21 @@ fn run(json_path: String) -> Result<(), io::Error> {
             }
         };
         let layout = JexLayout::new(terminal.get_frame().size(), app.show_tree);
-        if app.flash.is_some() {
+        if let Some(flash) = app.flash.as_mut() {
             match c.code {
                 KeyCode::Esc => {
                     app.flash = None;
-                    terminal.draw(app.render(AppRenderMode::Normal))?;
-                    continue;
                 }
-                _ => {
-                    terminal.draw(app.render(AppRenderMode::Normal))?;
-                    continue;
+                KeyCode::Down => {
+                    flash.scroll = flash.scroll.saturating_add(1);
                 }
+                KeyCode::Up => {
+                    flash.scroll = flash.scroll.saturating_sub(1);
+                }
+                _ => {}
             }
+            terminal.draw(app.render(AppRenderMode::Normal))?;
+            continue;
         }
         match c.code {
             KeyCode::Esc => break,
@@ -294,6 +295,9 @@ fn run(json_path: String) -> Result<(), io::Error> {
                     }
                 }
                 force_draw(&mut terminal, app.render(AppRenderMode::Normal))?;
+            }
+            KeyCode::Char('h') | KeyCode::Char('?') | KeyCode::F(1) => {
+                app.show_help();
             }
             _ => {}
         }
