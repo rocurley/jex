@@ -262,10 +262,23 @@ fn run(json_path: String) -> Result<(), io::Error> {
                 match title_rl.readline_with_initial("New Title:", (&view_frame.name, "")) {
                     Ok(new_name) => {
                         view_frame.name = new_name;
-                        force_draw(&mut terminal, app.render(AppRenderMode::Normal))?;
                     }
                     Err(_) => {}
                 }
+                force_draw(&mut terminal, app.render(AppRenderMode::Normal))?;
+            }
+            KeyCode::Char('s') => {
+                terminal.draw(app.render(AppRenderMode::InputEditor))?;
+                let view_frame = app.focused_view();
+                if let View::Json(Some(view)) = &view_frame.view {
+                    match title_rl.readline_with_initial("Save to:", (&view_frame.name, "")) {
+                        Ok(path) => {
+                            view.save_to(&path);
+                        }
+                        Err(_) => {}
+                    }
+                }
+                force_draw(&mut terminal, app.render(AppRenderMode::Normal))?;
             }
             _ => {}
         }

@@ -9,7 +9,7 @@ use crate::{
 };
 use log::trace;
 use serde_json::Deserializer;
-use std::{collections::HashSet, io, rc::Rc};
+use std::{collections::HashSet, io, io::Write, rc::Rc};
 use tui::{
     layout::{Alignment, Rect},
     style::{Color, Style},
@@ -373,6 +373,16 @@ impl JsonView {
     pub fn resize_to(&mut self, json_rect: Rect) {
         self.rect = json_rect;
         self.scroll.resize_to(json_rect);
+    }
+    pub fn save_to(&self, path: &str) -> std::io::Result<()> {
+        let mut file = std::fs::File::create(path)?;
+        for (i, v) in self.values.iter().enumerate() {
+            if i != 0 {
+                write!(file, "\n")?;
+            }
+            serde_json::to_writer_pretty(&mut file, v)?;
+        }
+        Ok(())
     }
 }
 
