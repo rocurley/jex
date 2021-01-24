@@ -322,7 +322,7 @@ impl GlobalCursor {
         self.resize_to(rect);
         lines.push(
             self.current_line(folds, rect.width)
-                .render(Some(&self.value_cursor) == cursor, rect.width),
+                .render(Some(&self.value_cursor) == cursor),
         );
         while lines.len() < rect.height as usize {
             if let None = self.advance(folds, rect.width) {
@@ -330,7 +330,7 @@ impl GlobalCursor {
             };
             lines.push(
                 self.current_line(folds, rect.width)
-                    .render(Some(&self.value_cursor) == cursor, rect.width),
+                    .render(Some(&self.value_cursor) == cursor),
             );
         }
         lines

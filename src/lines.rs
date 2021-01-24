@@ -33,7 +33,7 @@ use std::fmt::Debug;
 impl<'a> Line<'a> {
     // TODO: something less hilariously inefficient
     // TODO: wrapping for non-strings (keys???)
-    pub fn render(self, is_cursor: bool, width: u16) -> Spans<'static> {
+    pub fn render(self, is_cursor: bool) -> Spans<'static> {
         let indent_span = Span::raw(" ".repeat(self.indent as usize));
         let mut out = match &self.key {
             Some(key) => vec![
@@ -394,7 +394,6 @@ fn take_width(s: &str, target_width: u16) -> (&str, u16) {
     for (i, c) in s.char_indices() {
         let new_width = width + display_width(c) as u16;
         if new_width > target_width {
-            let raw = &s[..i];
             return (&s[..i], width);
         }
         width = new_width;

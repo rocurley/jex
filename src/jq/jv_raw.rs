@@ -9,10 +9,7 @@ use jq_sys::{
     jv_string_length_bytes, jv_string_sized, jv_string_value,
 };
 use serde_json::value::Value;
-use std::{
-    convert::TryInto, fmt, iter::FromIterator, marker::PhantomData, mem::forget, ops::Deref,
-    os::raw::c_char, slice, str,
-};
+use std::{convert::TryInto, fmt, iter::FromIterator, mem::forget, os::raw::c_char, slice, str};
 
 #[repr(transparent)]
 pub(super) struct JVRaw {
