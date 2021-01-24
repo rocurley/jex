@@ -162,6 +162,15 @@ fn force_draw<B: tui::backend::Backend, F: FnMut(&mut Frame<B>)>(
     terminal.backend_mut().draw(updates.into_iter())
 }
 
+struct DeferRestoreTerminal {}
+
+impl Drop for DeferRestoreTerminal {
+    fn drop(&mut self) {
+        disable_raw_mode().expect("Failed to disable raw mode");
+        execute!(io::stdout(), LeaveAlternateScreen).expect("Failed to leave alternate screen");
+    }
+}
+
 fn run(json_path: String) -> Result<(), io::Error> {
     enable_raw_mode().expect("Failed to enter raw mode");
 
@@ -173,6 +182,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
         execute!(io::stdout(), LeaveAlternateScreen).expect("Failed to leave alternate screen");
         default_panic_handler(p);
     }));
+    let _defer = DeferRestoreTerminal {};
     let f = fs::File::open(&json_path)?;
     let r = io::BufReader::new(f);
     let stdout = io::stdout();
@@ -314,8 +324,6 @@ fn run(json_path: String) -> Result<(), io::Error> {
         }
         terminal.draw(app.render(AppRenderMode::Normal))?;
     }
-    disable_raw_mode().expect("Failed to disable raw mode");
-    execute!(io::stdout(), LeaveAlternateScreen).expect("Failed to leave alternate screen");
     // Gracefully freeing the JV values can take a significant amount of time and doesn't actually
     // benefit anything: the OS will clean up after us when we exit.
     std::mem::forget(app);

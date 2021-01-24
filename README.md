@@ -10,9 +10,8 @@ First, you need to have cargo, the rust package and build manager installed. You
 
 Once you have cargo installed, you can build and install jex by running
 ```
-cargo install --path .
+cargo install jex
 ```
-from the root of this repo. Note that the period in the above line is part of the command.
 
 Use
 ---
