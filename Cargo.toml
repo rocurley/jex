@@ -1,6 +1,6 @@
 [package]
 name = "jex"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Roger Curley <rocurley@gmail.com>"]
 edition = "2018"
 license = "MIT"
@@ -9,7 +9,7 @@ homepage = "https://github.com/rocurley/jex/tree/master"
 readme = "README.md"
 repository = "https://github.com/rocurley/jex/tree/master"
 keywords = ["json", "jq"]
-categrories = ["command-line-utilities"]
+categories = ["command-line-utilities"]
 
 [[bin]]
 name = "jex"
