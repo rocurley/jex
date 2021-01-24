@@ -350,25 +350,23 @@ impl JsonView {
     }
     pub fn advance_cursor(&mut self) {
         let visible_range = self.visible_range(&self.folds);
-        let cursor_path = self.cursor.to_path();
-        if !visible_range.contains_value_end(&cursor_path) {
+        if !visible_range.contains_value_end(&self.cursor.to_path()) {
             self.scroll.advance(&self.folds, self.rect.width);
             return;
         }
         self.cursor.advance(&self.folds);
-        if !visible_range.contains_value(&cursor_path) {
+        if !visible_range.contains_value(&self.cursor.to_path()) {
             self.scroll.advance(&self.folds, self.rect.width);
         }
     }
     pub fn regress_cursor(&mut self) {
         let visible_range = self.visible_range(&self.folds);
-        let cursor_path = self.cursor.to_path();
-        if !visible_range.contains_value_start(&cursor_path) {
+        if !visible_range.contains_value_start(&self.cursor.to_path()) {
             self.scroll.regress(&self.folds, self.rect.width);
             return;
         }
         self.cursor.regress(&self.folds);
-        if !visible_range.contains_value(&cursor_path) {
+        if !visible_range.contains_value(&self.cursor.to_path()) {
             self.scroll.regress(&self.folds, self.rect.width);
         }
     }
@@ -378,6 +376,7 @@ impl JsonView {
     }
 }
 
+#[derive(Debug)]
 pub struct GlobalPathRange {
     start: GlobalPath,
     end: GlobalPath,
