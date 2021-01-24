@@ -97,6 +97,17 @@ struct BenchMode {}
 // TODO
 // * Long keys: once you can wrap keys across multiple lines, you have the tools to guarantee that
 //   that the content width never falls below 7.
+//      To do this, it would probably make sense to have a pipeline from values to
+//      Vec<Cow<String>>. For example:
+//      {                         vec!["{"], indent=0
+//        "hello": "world",       vec!["\"", "hello", "\"", ": ", "world", ","], indent=2
+//        "number": 5             vec!["\"", "number", "\"", ": ", "5"], indent=2
+//      }                         vec!["}"], indent=0
+//      This simplifies the lines iterator significantly: It no longer has to care about trailing
+//      commas or quotes: it's just opaque text. But it also requires no unbounded copies, since
+//      keys and strings will be included by reference.
+//
+//
 // * Edit tree:
 //   * Children can be modified if they have no children
 //   * Allow copying descendents onto another root, so you if you want to modify a tree's root you
