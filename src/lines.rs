@@ -1,5 +1,5 @@
 use crate::jq::jv::JVString;
-use std::{cell::RefCell, io::Write, rc::Rc};
+use std::{cell::RefCell, io::Write, ops::Range, rc::Rc};
 use tui::{
     style::{Color, Modifier, Style},
     text::{Span, Spans},
@@ -8,19 +8,19 @@ use unicode_general_category::{get_general_category, GeneralCategory};
 use unicode_width::UnicodeWidthChar;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Line<'a> {
-    pub content: LineContent<'a>,
-    pub key: Option<&'a str>,
+pub struct Line {
+    pub content: LineContent,
+    pub key: Option<JVString>,
     pub indent: u16,
     pub comma: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum LineContent<'a> {
+pub enum LineContent {
     Null,
     Bool(bool),
     Number(f64),
-    String(StrLine<'a>),
+    String(JVString),
     FoldedArray(usize),
     ArrayStart,
     ArrayEnd,
@@ -30,91 +30,90 @@ pub enum LineContent<'a> {
 }
 
 use std::fmt::Debug;
-impl<'a> Line<'a> {
-    // TODO: something less hilariously inefficient
-    // TODO: wrapping for non-strings (keys???)
-    pub fn render(self, is_cursor: bool) -> Spans<'static> {
-        let indent_span = Span::raw(" ".repeat(self.indent as usize));
-        let mut out = match &self.key {
-            Some(key) => vec![
-                indent_span,
-                Span::raw(format!("\"{}\"", escaped_str(key))),
-                Span::raw(" : "),
-            ],
-            _ => vec![indent_span],
-        };
+impl Line {
+    pub fn render(self, is_cursor: bool) -> LineFragments {
+        let indent = LineFragment::new(" ".repeat(self.indent as usize), false, Style::default());
         let style = if is_cursor {
             Style::default().bg(Color::Blue)
         } else {
             Style::default()
         };
+        let mut out = match self.key {
+            Some(key) => vec![
+                indent,
+                LineFragment::new("\"", false, Style::default()),
+                LineFragment::new(key, true, Style::default()),
+                LineFragment::new("\" : ", false, Style::default()),
+            ],
+            _ => vec![indent],
+        };
         match self.content {
             LineContent::Null => {
-                out.push(Span::styled("null", style));
+                out.push(LineFragment::new("null", false, style));
                 if self.comma {
-                    out.push(Span::raw(","));
+                    out.push(LineFragment::new_unstyled(",", false));
                 }
             }
-            LineContent::String(str_line) => {
-                let quoted = str_line.to_string();
-                out.push(Span::styled(quoted, style));
+            LineContent::String(string) => {
+                out.push(LineFragment::new(string, true, style));
                 if self.comma {
-                    // TODO: check if the comma will fit
-                    out.push(Span::raw(","));
+                    out.push(LineFragment::new_unstyled(",", false));
                 }
             }
             LineContent::Bool(b) => {
-                out.push(Span::styled(b.to_string(), style));
+                out.push(LineFragment::new(b.to_string(), false, style));
                 if self.comma {
-                    out.push(Span::raw(","));
+                    out.push(LineFragment::new_unstyled(",", false));
                 }
             }
             LineContent::Number(x) => {
-                out.push(Span::styled(x.to_string(), style));
+                out.push(LineFragment::new(x.to_string(), false, style));
                 if self.comma {
-                    out.push(Span::raw(","));
+                    out.push(LineFragment::new_unstyled(",", false));
                 }
             }
             LineContent::FoldedArray(children) => {
-                out.push(Span::styled("[...]", style));
+                out.push(LineFragment::new("[...]", false, style));
                 if self.comma {
-                    out.push(Span::raw(","));
+                    out.push(LineFragment::new_unstyled(",", false));
                 }
-                out.push(Span::styled(
+                out.push(LineFragment::new(
                     format!(" ({} children)", children),
+                    false,
                     Style::default().add_modifier(Modifier::DIM),
                 ));
             }
             LineContent::ArrayStart => {
-                out.push(Span::styled("[", style));
+                out.push(LineFragment::new("[", false, style));
             }
             LineContent::ArrayEnd => {
-                out.push(Span::styled("]", style));
+                out.push(LineFragment::new("]", false, style));
                 if self.comma {
-                    out.push(Span::raw(","));
+                    out.push(LineFragment::new_unstyled(",", false));
                 }
             }
             LineContent::FoldedObject(children) => {
-                out.push(Span::styled("{...}", style));
+                out.push(LineFragment::new("{...}", false, style));
                 if self.comma {
-                    out.push(Span::raw(","));
+                    out.push(LineFragment::new_unstyled(",", false));
                 }
-                out.push(Span::styled(
+                out.push(LineFragment::new(
                     format!(" ({} children)", children),
+                    false,
                     Style::default().add_modifier(Modifier::DIM),
                 ));
             }
             LineContent::ObjectStart => {
-                out.push(Span::styled("{", style));
+                out.push(LineFragment::new("{", false, style));
             }
             LineContent::ObjectEnd => {
-                out.push(Span::styled("}", style));
+                out.push(LineFragment::new("}", false, style));
                 if self.comma {
-                    out.push(Span::raw(","));
+                    out.push(LineFragment::new_unstyled(",", false));
                 }
             }
         };
-        Spans::from(out)
+        LineFragments::new(out)
     }
 }
 
@@ -186,32 +185,17 @@ fn display_width(c: char) -> u8 {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct StrLine<'a> {
+pub struct StrLine {
     pub is_start: bool,
     pub is_end: bool,
-    pub raw: &'a str,
-    pub start: usize,
-}
-
-impl<'a> StrLine<'a> {
-    fn to_string(&self) -> String {
-        let mut escaped_raw = Vec::new();
-        if self.is_start {
-            write!(&mut escaped_raw, "\"").expect("Write to a vec should be infaliable");
-        }
-        write_escaped_str(self.raw, &mut escaped_raw).expect("Write to a vec should be infaliable");
-        if self.is_end {
-            write!(&mut escaped_raw, "\"").expect("Write to a vec should be infaliable");
-        }
-        String::from_utf8(escaped_raw).expect("Escaped string was not utf-8")
-    }
+    pub content: Spans<'static>,
 }
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy, PartialOrd, Ord)]
 enum LineCursorPosition {
     Start,
     Valid {
-        start: usize, // bytes
+        start: LineFragmentsIndex,
         current_line: usize,
     },
     End,
@@ -219,7 +203,7 @@ enum LineCursorPosition {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum StringLike {
-    Str(&'static str),
+    Constant(&'static str),
     String(String),
     JV(JVString),
 }
@@ -227,19 +211,191 @@ pub enum StringLike {
 impl StringLike {
     fn as_str(&self) -> &str {
         match self {
-            StringLike::Str(s) => s,
+            StringLike::Constant(s) => s,
             StringLike::String(s) => s.as_str(),
             StringLike::JV(s) => s.value(),
         }
     }
+    fn len(&self) -> usize {
+        self.as_str().len()
+    }
 }
 
-#[derive(PartialEq, Eq, Debug, Clone)]
+impl From<&'static str> for StringLike {
+    fn from(s: &'static str) -> Self {
+        StringLike::Constant(s)
+    }
+}
+
+impl From<String> for StringLike {
+    fn from(s: String) -> Self {
+        StringLike::String(s)
+    }
+}
+
+impl From<JVString> for StringLike {
+    fn from(s: JVString) -> Self {
+        StringLike::JV(s)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct LineFragment {
+    string: StringLike,
+    is_escaped: bool,
+    style: Style,
+}
+
+impl LineFragment {
+    fn new<S: Into<StringLike>>(s: S, is_escaped: bool, style: Style) -> Self {
+        LineFragment {
+            string: s.into(),
+            is_escaped,
+            style,
+        }
+    }
+    fn new_unstyled<S: Into<StringLike>>(s: S, is_escaped: bool) -> Self {
+        LineFragment {
+            string: s.into(),
+            is_escaped,
+            style: Style::default(),
+        }
+    }
+    fn take_width(&self, from: usize, target_width: u16) -> (Range<usize>, u16) {
+        if self.is_escaped {
+            let mut width = 0u16;
+            for (i, c) in self.string.as_str()[from..].char_indices() {
+                let new_width = width + display_width(c) as u16;
+                if new_width > target_width {
+                    return (from..from + i, width);
+                }
+                width = new_width;
+            }
+            (from..self.string.len(), width)
+        } else {
+            let width = std::cmp::min(self.string.len() - from, target_width as usize);
+            (from..from + width, width as u16)
+        }
+    }
+    fn span(&self, range: Range<usize>) -> Span<'static> {
+        let s = if self.is_escaped {
+            escaped_str(&self.string.as_str()[range])
+        } else {
+            self.string.as_str().to_string()
+        };
+        Span::styled(s, self.style)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct LineFragments(Vec<LineFragment>);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
+pub struct LineFragmentsIndex {
+    fragment_index: usize,
+    byte_index: usize,
+}
+
+impl LineFragments {
+    fn new(v: Vec<LineFragment>) -> Self {
+        Self(v)
+    }
+    fn take_width(
+        &self,
+        from: LineFragmentsIndex,
+        target_width: u16,
+    ) -> (Range<LineFragmentsIndex>, u16) {
+        let mut current = from;
+        let width = 0;
+        loop {
+            let fragment = self.0[current.fragment_index];
+            let (fragment_range, fragment_width) =
+                fragment.take_width(current.byte_index, target_width - width);
+            width += fragment_width;
+            current.byte_index = fragment_range.end;
+            if fragment_range.end != fragment.string.len() {
+                // Didn't consume the whole fragment
+                break;
+            }
+            if width == target_width {
+                // Out of width
+                break;
+            }
+            if current.fragment_index == self.0.len() {
+                // No more fragments
+                break;
+            }
+            current.fragment_index += 1;
+            current.byte_index = 0;
+        }
+        (from..current, width)
+    }
+    fn spans(&self, range: Range<LineFragmentsIndex>) -> Spans<'static> {
+        self.0
+            .iter()
+            .enumerate()
+            .map(|(i, fragment)| {
+                let start = if i == 0 { range.start.byte_index } else { 0 };
+                let end = if i == range.end.fragment_index - range.start.fragment_index {
+                    range.end.byte_index
+                } else {
+                    fragment.string.len()
+                };
+                fragment.span(start..end)
+            })
+            .collect::<Vec<_>>()
+            .into()
+    }
+    fn to_global_byte_offset(&self, ix: LineFragmentsIndex) -> usize {
+        self.0
+            .iter()
+            .take(ix.fragment_index)
+            .map(|fragment| fragment.string.len())
+            .sum::<usize>()
+            + ix.byte_index
+    }
+    fn from_global_byte_offset(&self, mut offset: usize) -> LineFragmentsIndex {
+        for (fragment_index, fragment) in self.0.iter().enumerate() {
+            if offset <= fragment.string.len() {
+                return LineFragmentsIndex {
+                    fragment_index,
+                    byte_index: offset,
+                };
+            }
+            offset -= fragment.string.len();
+        }
+        panic!("Offset out of bounds")
+    }
+    fn add_byte_offset(&self, mut ix: LineFragmentsIndex, delta: usize) -> LineFragmentsIndex {
+        ix.byte_index += delta;
+        while ix.byte_index >= self.0[ix.fragment_index].string.len() {
+            ix.byte_index -= self.0[ix.fragment_index].string.len();
+        }
+        ix
+    }
+    fn sub_byte_offset(&self, mut ix: LineFragmentsIndex, mut delta: usize) -> LineFragmentsIndex {
+        while delta > ix.byte_index {
+            delta -= ix.byte_index - 1;
+            ix.fragment_index -= 1;
+            ix.byte_index = self.0[ix.fragment_index].string.len() - 1;
+        }
+        ix.byte_index -= delta;
+        ix
+    }
+    fn end_index(&self) -> LineFragmentsIndex {
+        LineFragmentsIndex {
+            fragment_index: self.0.len(),
+            byte_index: self.0.last().unwrap().string.len(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct LineCursor {
     width: u16,
     line_widths: Rc<RefCell<Vec<u16>>>, //bytes
     position: LineCursorPosition,
-    value: StringLike,
+    content: LineFragments,
 }
 
 impl LineCursor {
@@ -250,20 +406,49 @@ impl LineCursor {
                 start,
                 current_line,
             } => {
-                let is_start = start == 0;
+                let is_start = start.fragment_index == 0 && start.byte_index == 0;
                 let line_widths = self.line_widths.borrow();
-                let end = start + line_widths[current_line] as usize;
-                // We guarantee that we'll push an empty line to line_widths if we scroll to the
-                // end and there's no room for a closing quote.
-                let is_end =
-                    self.value.as_str().len() == end && current_line == line_widths.len() - 1;
-                let raw = &self.value.as_str()[start..end];
+                let end = self
+                    .content
+                    .add_byte_offset(start, line_widths[current_line] as usize);
+                let is_end = self.content.end_index() == end;
+                let content = self.content.spans(start..end);
                 Some(StrLine {
                     is_start,
                     is_end,
-                    raw,
-                    start,
+                    content,
                 })
+            }
+        }
+    }
+    fn push_next_line_width(&mut self) {
+        let mut line_widths = self.line_widths.borrow_mut();
+        match self.position {
+            LineCursorPosition::Start => {
+                if line_widths.is_empty() {
+                    let (range, _) = self.content.take_width(
+                        LineFragmentsIndex {
+                            fragment_index: 0,
+                            byte_index: 0,
+                        },
+                        self.width,
+                    );
+                    line_widths.push(self.content.to_global_byte_offset(range.end) as u16);
+                }
+            }
+            LineCursorPosition::End => {}
+            LineCursorPosition::Valid {
+                current_line,
+                start,
+            } => {
+                if current_line == line_widths.len() {
+                    let (range, _) = self.content.take_width(start, self.width);
+                    line_widths.push(
+                        (self.content.to_global_byte_offset(range.end)
+                            - self.content.to_global_byte_offset(start))
+                            as u16,
+                    );
+                }
             }
         }
     }
@@ -284,40 +469,28 @@ impl LineCursor {
         };
     }
     pub fn move_next(&mut self) {
-        let mut line_widths = self.line_widths.borrow_mut();
         match &mut self.position {
             LineCursorPosition::Start => {
-                if line_widths.is_empty() {
-                    // width - 1 for the opening quote
-                    Self::extend_line_widths(
-                        line_widths.as_mut(),
-                        self.value.as_str(),
-                        self.width - 1,
-                    );
-                }
                 self.position = LineCursorPosition::Valid {
                     current_line: 0,
-                    start: 0,
-                }
+                    start: LineFragmentsIndex {
+                        fragment_index: 0,
+                        byte_index: 0,
+                    },
+                };
             }
             LineCursorPosition::End => {}
             LineCursorPosition::Valid {
                 current_line,
                 start,
             } => {
-                *start += line_widths[*current_line] as usize;
+                *start = self
+                    .content
+                    .add_byte_offset(*start, self.line_widths.borrow()[*current_line] as usize);
                 *current_line += 1;
-                if *current_line == line_widths.len() {
-                    let s = self.value.as_str();
-                    assert!(*start <= s.len());
-                    if *start == s.len() {
-                        self.position = LineCursorPosition::End;
-                    } else {
-                        Self::extend_line_widths(&mut line_widths, &s[*start..], self.width);
-                    }
-                }
             }
         }
+        self.push_next_line_width();
     }
     pub fn move_prev(&mut self) {
         let line_widths = self.line_widths.borrow_mut();
@@ -325,8 +498,9 @@ impl LineCursor {
             LineCursorPosition::Start => {}
             LineCursorPosition::End => {
                 let current_line = line_widths.len() - 1;
-                let s = self.value.as_str();
-                let start = s.len() - line_widths[current_line] as usize;
+                let start = self
+                    .content
+                    .sub_byte_offset(self.content.end_index(), line_widths[current_line] as usize);
                 self.position = LineCursorPosition::Valid {
                     current_line,
                     start,
@@ -340,7 +514,9 @@ impl LineCursor {
                 start,
             } => {
                 *current_line -= 1;
-                *start -= line_widths[*current_line] as usize;
+                *start = self
+                    .content
+                    .sub_byte_offset(*start, line_widths[*current_line] as usize);
             }
         }
     }
@@ -350,21 +526,21 @@ impl LineCursor {
             LineCursorPosition::Start | LineCursorPosition::End => None,
         }
     }
-    pub fn new_at_start(value: StringLike, width: u16) -> Self {
+    pub fn new_at_start(content: LineFragments, width: u16) -> Self {
         assert!(width > 6);
         let mut out = LineCursor {
             line_widths: Rc::new(RefCell::new(Vec::new())),
             position: LineCursorPosition::Start,
-            value,
+            content,
             width,
         };
         out.move_next();
         out
     }
-    pub fn new_at_end(value: StringLike, width: u16) -> Self {
+    pub fn new_at_end(content: LineFragments, width: u16) -> Self {
         assert!(width > 6);
         // We start from the start and scan forward to populate line_widths
-        let mut out = Self::new_at_start(value, width);
+        let mut out = Self::new_at_start(content, width);
         while out.position != LineCursorPosition::End {
             out.move_next();
         }
@@ -377,15 +553,15 @@ impl LineCursor {
         }
         match self.position {
             LineCursorPosition::Start => {
-                *self = LineCursor::new_at_start(self.value.clone(), width);
+                *self = LineCursor::new_at_start(self.content.clone(), width);
                 self.move_prev();
             }
             LineCursorPosition::End => {
-                *self = LineCursor::new_at_end(self.value.clone(), width);
+                *self = LineCursor::new_at_end(self.content.clone(), width);
                 self.move_next();
             }
             LineCursorPosition::Valid { start: target, .. } => {
-                *self = LineCursor::new_at_start(self.value.clone(), width);
+                *self = LineCursor::new_at_start(self.content.clone(), width);
                 loop {
                     match self.position {
                         LineCursorPosition::Start => {
