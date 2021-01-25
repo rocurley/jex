@@ -1,6 +1,6 @@
 use crate::{
     jq::jv::{JVArray, JVObject, JVString, OwnedObjectIterator, JV},
-    lines::{escaped_str, Line, LineContent, LineCursor},
+    lines::{escaped_str, Line, LineContent, LineCursor, StringLike},
 };
 use log::trace;
 use regex::Regex;
@@ -287,7 +287,7 @@ impl GlobalCursor {
         let line_cursor = match &cursor.focus {
             // Note that this is only valid because a top-level string renders across the entire
             // rect, so rect width is equal to the line width
-            &JV::String(ref s) => Some(LineCursor::new_at_start(s.clone(), width)),
+            &JV::String(ref s) => Some(LineCursor::new_at_start(StringLike::JV(s.clone()), width)),
             _ => None,
         };
         Some(GlobalCursor {
@@ -300,7 +300,7 @@ impl GlobalCursor {
         let line_cursor = match &cursor.focus {
             // Note that this is only valid because a top-level string renders across the entire
             // rect, so rect width is equal to the line width
-            &JV::String(ref s) => Some(LineCursor::new_at_end(s.clone(), width)),
+            &JV::String(ref s) => Some(LineCursor::new_at_end(StringLike::JV(s.clone()), width)),
             _ => None,
         };
         Some(GlobalCursor {
@@ -349,7 +349,10 @@ impl GlobalCursor {
         self.value_cursor.advance(folds)?;
         if let JV::String(ref value) = &self.value_cursor.focus {
             let width = self.value_cursor.content_width(width);
-            self.line_cursor = Some(LineCursor::new_at_start(value.clone(), width));
+            self.line_cursor = Some(LineCursor::new_at_start(
+                StringLike::JV(value.clone()),
+                width,
+            ));
         } else {
             self.line_cursor = None;
         }
@@ -368,7 +371,7 @@ impl GlobalCursor {
         self.value_cursor.regress(folds)?;
         if let JV::String(ref value) = &self.value_cursor.focus {
             let width = self.value_cursor.content_width(width);
-            self.line_cursor = Some(LineCursor::new_at_end(value.clone(), width));
+            self.line_cursor = Some(LineCursor::new_at_end(StringLike::JV(value.clone()), width));
         } else {
             self.line_cursor = None;
         }

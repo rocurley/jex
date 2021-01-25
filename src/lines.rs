@@ -217,12 +217,29 @@ enum LineCursorPosition {
     End,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum StringLike {
+    Str(&'static str),
+    String(String),
+    JV(JVString),
+}
+
+impl StringLike {
+    fn as_str(&self) -> &str {
+        match self {
+            StringLike::Str(s) => s,
+            StringLike::String(s) => s.as_str(),
+            StringLike::JV(s) => s.value(),
+        }
+    }
+}
+
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub struct LineCursor {
     width: u16,
     line_widths: Rc<RefCell<Vec<u16>>>, //bytes
     position: LineCursorPosition,
-    value: JVString,
+    value: StringLike,
 }
 
 impl LineCursor {
@@ -239,8 +256,8 @@ impl LineCursor {
                 // We guarantee that we'll push an empty line to line_widths if we scroll to the
                 // end and there's no room for a closing quote.
                 let is_end =
-                    self.value.value().len() == end && current_line == line_widths.len() - 1;
-                let raw = &self.value.value()[start..end];
+                    self.value.as_str().len() == end && current_line == line_widths.len() - 1;
+                let raw = &self.value.as_str()[start..end];
                 Some(StrLine {
                     is_start,
                     is_end,
@@ -274,7 +291,7 @@ impl LineCursor {
                     // width - 1 for the opening quote
                     Self::extend_line_widths(
                         line_widths.as_mut(),
-                        self.value.value(),
+                        self.value.as_str(),
                         self.width - 1,
                     );
                 }
@@ -291,7 +308,7 @@ impl LineCursor {
                 *start += line_widths[*current_line] as usize;
                 *current_line += 1;
                 if *current_line == line_widths.len() {
-                    let s = self.value.value();
+                    let s = self.value.as_str();
                     assert!(*start <= s.len());
                     if *start == s.len() {
                         self.position = LineCursorPosition::End;
@@ -308,7 +325,7 @@ impl LineCursor {
             LineCursorPosition::Start => {}
             LineCursorPosition::End => {
                 let current_line = line_widths.len() - 1;
-                let s = self.value.value();
+                let s = self.value.as_str();
                 let start = s.len() - line_widths[current_line] as usize;
                 self.position = LineCursorPosition::Valid {
                     current_line,
@@ -333,7 +350,7 @@ impl LineCursor {
             LineCursorPosition::Start | LineCursorPosition::End => None,
         }
     }
-    pub fn new_at_start(value: JVString, width: u16) -> Self {
+    pub fn new_at_start(value: StringLike, width: u16) -> Self {
         assert!(width > 6);
         let mut out = LineCursor {
             line_widths: Rc::new(RefCell::new(Vec::new())),
@@ -344,7 +361,7 @@ impl LineCursor {
         out.move_next();
         out
     }
-    pub fn new_at_end(value: JVString, width: u16) -> Self {
+    pub fn new_at_end(value: StringLike, width: u16) -> Self {
         assert!(width > 6);
         // We start from the start and scan forward to populate line_widths
         let mut out = Self::new_at_start(value, width);
@@ -403,7 +420,7 @@ fn take_width(s: &str, target_width: u16) -> (&str, u16) {
 
 #[cfg(test)]
 mod tests {
-    use super::{display_width, escaped_str, LineCursor, StrLine};
+    use super::{display_width, escaped_str, LineCursor, StrLine, StringLike};
     use crate::jq::jv::JVString;
     use proptest::prelude::*;
     use unicode_width::UnicodeWidthStr;
@@ -440,16 +457,16 @@ mod tests {
     fn check_lines(string: &str, width: u16) {
         let value = JVString::new(&string);
         {
-            let wide_cursor = LineCursor::new_at_start(value.clone(), u16::MAX);
-            let actual_cursor = LineCursor::new_at_start(value.clone(), width);
+            let wide_cursor = LineCursor::new_at_start(StringLike::JV(value.clone()), u16::MAX);
+            let actual_cursor = LineCursor::new_at_start(StringLike::JV(value.clone()), width);
             let expected = read_cursor_lines(wide_cursor);
             let actual = read_cursor_lines(actual_cursor);
             assert!(actual.len() >= 2);
             assert_eq!(expected, actual);
         }
         {
-            let wide_cursor = LineCursor::new_at_end(value.clone(), u16::MAX);
-            let actual_cursor = LineCursor::new_at_end(value, width);
+            let wide_cursor = LineCursor::new_at_end(StringLike::JV(value.clone()), u16::MAX);
+            let actual_cursor = LineCursor::new_at_end(StringLike::JV(value), width);
             let expected = read_cursor_lines_reverse(wide_cursor);
             let actual = read_cursor_lines_reverse(actual_cursor);
             assert!(actual.len() >= 2);
