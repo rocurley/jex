@@ -495,22 +495,6 @@ impl LineCursor {
             }
         }
     }
-    fn extend_line_widths(line_widths: &mut Vec<u16>, s: &str, width: u16) {
-        let (line, line_term_width) = take_width(s, width);
-        if s.len() > 0 {
-            assert!(
-                line.len() != 0,
-                "Took zero-width line for string {:?} with width {}",
-                s,
-                width
-            );
-        }
-        line_widths.push(line.len() as u16);
-        if line.len() == s.len() && line_term_width == width {
-            // Everything but the closing quote fits on this line
-            line_widths.push(0);
-        };
-    }
     pub fn move_next(&mut self) {
         match &mut self.position {
             LineCursorPosition::Start => {
@@ -625,18 +609,6 @@ impl LineCursor {
     }
 }
 
-fn take_width(s: &str, target_width: u16) -> (&str, u16) {
-    let mut width = 0u16;
-    for (i, c) in s.char_indices() {
-        let new_width = width + display_width(c) as u16;
-        if new_width > target_width {
-            return (&s[..i], width);
-        }
-        width = new_width;
-    }
-    (s, width)
-}
-
 #[cfg(test)]
 mod tests {
     use super::{display_width, escaped_str, LineCursor, LineFragment, LineFragments};
@@ -654,7 +626,7 @@ mod tests {
     fn read_cursor_lines_reverse(mut cursor: LineCursor) -> String {
         let mut out = String::new();
         while let Some(line) = cursor.current() {
-            let mut s: String = line.content.iter().map(|span| span.text).collect();
+            let mut s: String = line.content.iter().map(|span| span.text.as_str()).collect();
             assert!(s.width() <= cursor.width as usize);
             std::mem::swap(&mut out, &mut s);
             out.extend(s.chars());
@@ -665,7 +637,7 @@ mod tests {
     fn read_cursor_lines(mut cursor: LineCursor) -> String {
         let mut out = String::new();
         while let Some(line) = cursor.current() {
-            let mut s: String = line.content.iter().map(|span| span.text).collect();
+            let s: String = line.content.iter().map(|span| span.text.as_str()).collect();
             assert!(s.width() <= cursor.width as usize);
             out.extend(s.chars());
             cursor.move_next();
@@ -675,15 +647,15 @@ mod tests {
     fn check_lines(string: String, width: u16) {
         let line_fragments = LineFragments::new(vec![LineFragment::new_unstyled(string, true)]);
         {
-            let wide_cursor = LineCursor::new_at_start(line_fragments, u16::MAX);
-            let actual_cursor = LineCursor::new_at_start(line_fragments, width);
+            let wide_cursor = LineCursor::new_at_start(line_fragments.clone(), u16::MAX);
+            let actual_cursor = LineCursor::new_at_start(line_fragments.clone(), width);
             let expected = read_cursor_lines(wide_cursor);
             let actual = read_cursor_lines(actual_cursor);
             assert!(actual.len() >= 2);
             assert_eq!(expected, actual);
         }
         {
-            let wide_cursor = LineCursor::new_at_end(line_fragments, u16::MAX);
+            let wide_cursor = LineCursor::new_at_end(line_fragments.clone(), u16::MAX);
             let actual_cursor = LineCursor::new_at_end(line_fragments, width);
             let expected = read_cursor_lines_reverse(wide_cursor);
             let actual = read_cursor_lines_reverse(actual_cursor);
@@ -718,7 +690,7 @@ mod tests {
             let line_fragments = LineFragments::new(vec![LineFragment::new_unstyled(string, true)]);
             let actual_cursor = LineCursor::new_at_start(line_fragments, 10000);
             let line = actual_cursor.current().unwrap();
-            let actual: String = line.content.iter().map(|span| span.text).collect();
+            let actual: String = line.content.iter().map(|span| span.text.as_str()).collect();
             assert_eq!(actual, expected, "Test failure for {:?}", string);
         }
     }

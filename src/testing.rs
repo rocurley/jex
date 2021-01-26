@@ -1,4 +1,7 @@
-use crate::lines::{Line, LineContent, StrLine};
+use crate::{
+    jq::jv::JVString,
+    lines::{Line, LineContent, StrLine},
+};
 use proptest::prelude::*;
 use serde_json::value::Value;
 pub fn arb_json() -> impl Strategy<Value = Value> {
@@ -23,7 +26,7 @@ pub fn arb_json() -> impl Strategy<Value = Value> {
     )
 }
 
-pub fn json_to_lines<'a, I: Iterator<Item = &'a Value>>(vs: I) -> Vec<Line<'a>> {
+pub fn json_to_lines<'a, I: Iterator<Item = &'a Value>>(vs: I) -> Vec<Line> {
     let mut out = Vec::new();
     for value in vs {
         json_to_lines_inner(None, value, 0, &mut out, false);
@@ -31,11 +34,11 @@ pub fn json_to_lines<'a, I: Iterator<Item = &'a Value>>(vs: I) -> Vec<Line<'a>> 
     out
 }
 
-fn push_line<'a>(
-    key: Option<&'a str>,
-    content: LineContent<'a>,
+fn push_line(
+    key: Option<JVString>,
+    content: LineContent,
     indent: u16,
-    out: &mut Vec<Line<'a>>,
+    out: &mut Vec<Line>,
     comma: bool,
 ) {
     let line = Line {
@@ -47,11 +50,11 @@ fn push_line<'a>(
     out.push(line);
 }
 
-fn json_to_lines_inner<'a>(
-    key: Option<&'a str>,
-    v: &'a Value,
+fn json_to_lines_inner(
+    key: Option<JVString>,
+    v: &Value,
     indent: u16,
-    out: &mut Vec<Line<'a>>,
+    out: &mut Vec<Line>,
     comma: bool,
 ) {
     match v {
@@ -73,12 +76,7 @@ fn json_to_lines_inner<'a>(
         Value::String(s) => {
             push_line(
                 key,
-                LineContent::String(StrLine {
-                    is_start: true,
-                    is_end: true,
-                    raw: s,
-                    start: 0,
-                }),
+                LineContent::String(JVString::new(s)),
                 indent,
                 out,
                 comma,
@@ -96,7 +94,7 @@ fn json_to_lines_inner<'a>(
             push_line(key, LineContent::ObjectStart, indent, out, false);
             for (i, (k, x)) in xs.iter().enumerate() {
                 let comma = i != xs.len() - 1;
-                json_to_lines_inner(Some(k.as_str().into()), x, indent + 2, out, comma);
+                json_to_lines_inner(Some(JVString::new(k)), x, indent + 2, out, comma);
             }
             push_line(None, LineContent::ObjectEnd, indent, out, comma);
         }

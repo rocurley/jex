@@ -723,6 +723,7 @@ mod tests {
     use super::{GlobalCursor, ValueCursor};
     use crate::{
         jq::jv::JV,
+        lines::LineCursor,
         testing::{arb_json, json_to_lines},
     };
     use pretty_assertions::assert_eq;
@@ -756,9 +757,13 @@ mod tests {
             if let Some(mut cursor) = GlobalCursor::new(jsons.into(), width, &folds) {
                 let mut actual_lines = Vec::new();
                 actual_lines.push(cursor.current_line());
-                assert_eq!(cursor.current_line(), expected_lines.next().expect("Expected lines shorter than actual lines"));
+                let expected_line = expected_lines.next().expect("Expected lines shorter than actual lines");
+                let expected = LineCursor::new_at_start(expected_line.render(), width).current().unwrap();
+                assert_eq!(cursor.current_line(), expected);
                 while let Some(()) = cursor.advance(&folds, width) {
-                    assert_eq!(cursor.current_line(), expected_lines.next().expect("Expected lines shorter than actual lines"));
+                    let expected_line = expected_lines.next().expect("Expected lines shorter than actual lines");
+                    let expected = LineCursor::new_at_start(expected_line.render(), width).current().unwrap();
+                    assert_eq!(cursor.current_line(), expected);
                 }
             }
             assert!(expected_lines.next().is_none());
@@ -793,7 +798,7 @@ mod tests {
             return;
         }
         actual.regress(folds, width).unwrap();
-        assert_eq!(actual, *cursor);
+        assert_eq!(actual.to_path(), cursor.to_path());
     }
     fn hashable_cursor_key(cursor: &GlobalCursor) -> impl std::hash::Hash + Eq {
         (
