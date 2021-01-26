@@ -1,5 +1,5 @@
 use crate::jq::jv::JVString;
-use std::{cell::RefCell, ops::Range, rc::Rc};
+use std::{cell::RefCell, matches, ops::Range, rc::Rc};
 use tui::{
     style::{Color, Modifier, Style},
     text::{Span, Spans},
@@ -451,6 +451,9 @@ pub struct LineCursor {
 }
 
 impl LineCursor {
+    pub fn valid(&self) -> bool {
+        matches!(self.position, LineCursorPosition::Valid { .. })
+    }
     pub fn current(&self) -> Option<StrLine> {
         match self.position {
             LineCursorPosition::Start | LineCursorPosition::End => None,
@@ -470,6 +473,21 @@ impl LineCursor {
                     is_end,
                     content,
                 })
+            }
+        }
+    }
+    pub fn at_end(&self) -> Option<bool> {
+        match self.position {
+            LineCursorPosition::Start | LineCursorPosition::End => None,
+            LineCursorPosition::Valid {
+                start,
+                current_line,
+            } => {
+                let line_widths = self.line_widths.borrow();
+                let end = self
+                    .content
+                    .add_byte_offset(start, line_widths[current_line] as usize);
+                Some(self.content.end_index() == end)
             }
         }
     }

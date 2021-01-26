@@ -299,12 +299,12 @@ impl JsonView {
     pub fn visible_range(&self, folds: &HashSet<(usize, Vec<usize>)>) -> GlobalPathRange {
         let mut scroll = self.scroll.clone();
         let start = scroll.to_path();
-        let mut end_is_line_end = scroll.current_line().is_end;
+        let mut end_is_line_end = scroll.at_line_end();
         for _ in 1..self.rect.height {
             if let None = scroll.advance(folds, self.rect.width) {
                 break;
             };
-            end_is_line_end = scroll.current_line().is_end;
+            end_is_line_end = scroll.at_line_end();
         }
         let end = scroll.to_path();
         GlobalPathRange {

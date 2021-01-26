@@ -333,7 +333,7 @@ impl GlobalCursor {
         trace!("Advancing global cursor (width={}): {:#?}", width, self);
         let lc = &mut self.line_cursor;
         lc.move_next();
-        if lc.current().is_some() {
+        if lc.valid() {
             trace!("Advanced global cursor {:#?}", self);
             return Some(());
         } else {
@@ -348,7 +348,7 @@ impl GlobalCursor {
     pub fn regress(&mut self, folds: &HashSet<(usize, Vec<usize>)>, width: u16) -> Option<()> {
         let lc = &mut self.line_cursor;
         lc.move_prev();
-        if lc.current().is_some() {
+        if lc.valid() {
             return Some(());
         } else {
             lc.move_next();
@@ -370,6 +370,11 @@ impl GlobalCursor {
     }
     pub fn resize_to(&mut self, rect: Rect) {
         self.line_cursor.set_width(rect.width);
+    }
+    pub fn at_line_end(&self) -> bool {
+        self.line_cursor
+            .at_end()
+            .expect("GlobalCursor should not contain invalid LineCursor")
     }
 }
 
