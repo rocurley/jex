@@ -843,10 +843,8 @@ mod tests {
             let folds = HashSet::new();
             let mut seen = HashSet::new();
             if let Some(mut cursor) = GlobalCursor::new(jsons.clone(), width, &folds) {
-                dbg!(&cursor);
                 check_advance_regress(&cursor, &folds, width);
                 while let Some(()) = cursor.advance(&folds, width) {
-                    dbg!(&cursor);
                     let key = hashable_cursor_key(&cursor);
                     if seen.contains(&key) {
                         panic!("Infinite loop");
@@ -867,7 +865,6 @@ mod tests {
                 let mut prior_path = cursor.to_path();
                 while let Some(()) = cursor.advance(&folds) {
                     let new_path = cursor.to_path();
-                    dbg!(&new_path, &prior_path);
                     assert!(new_path > prior_path, "Expected {:?} > {:?}", &new_path, &prior_path);
                     prior_path = new_path;
                 }

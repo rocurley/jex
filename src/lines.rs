@@ -341,6 +341,7 @@ pub struct LineFragmentsIndex {
 
 impl LineFragments {
     fn new(v: Vec<LineFragment>) -> Self {
+        assert_ne!(v.len(), 0);
         Self(v)
     }
     fn take_width(
@@ -364,7 +365,7 @@ impl LineFragments {
                 // Out of width
                 break;
             }
-            if current.fragment_index == self.0.len() {
+            if current.fragment_index == self.0.len() - 1 {
                 // No more fragments
                 break;
             }
@@ -411,14 +412,17 @@ impl LineFragments {
     }
     fn add_byte_offset(&self, mut ix: LineFragmentsIndex, delta: usize) -> LineFragmentsIndex {
         ix.byte_index += delta;
-        while ix.byte_index >= self.0[ix.fragment_index].string.len() {
+        while ix.byte_index >= self.0[ix.fragment_index].string.len()
+            && ix.fragment_index != self.0.len() - 1
+        {
             ix.byte_index -= self.0[ix.fragment_index].string.len();
+            ix.fragment_index += 1;
         }
         ix
     }
     fn sub_byte_offset(&self, mut ix: LineFragmentsIndex, mut delta: usize) -> LineFragmentsIndex {
         while delta > ix.byte_index {
-            delta -= ix.byte_index - 1;
+            delta -= ix.byte_index + 1;
             ix.fragment_index -= 1;
             ix.byte_index = self.0[ix.fragment_index].string.len() - 1;
         }
@@ -427,7 +431,7 @@ impl LineFragments {
     }
     fn end_index(&self) -> LineFragmentsIndex {
         LineFragmentsIndex {
-            fragment_index: self.0.len(),
+            fragment_index: self.0.len() - 1,
             byte_index: self.0.last().unwrap().string.len(),
         }
     }
@@ -515,6 +519,9 @@ impl LineCursor {
                     .content
                     .add_byte_offset(*start, self.line_widths.borrow()[*current_line] as usize);
                 *current_line += 1;
+                if *start == self.content.end_index() {
+                    self.position = LineCursorPosition::End;
+                }
             }
         }
         self.push_next_line_width();

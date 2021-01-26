@@ -6,3 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc 85048c868e4672435a5061c358316342ccfcd154acfd0b85f5b963810328da18 # shrinks to string = " "
 cc e2599651120db727151277cd047eda9c06fd9c7ed9b1406fee20d1fee632fcce # shrinks to string = "\u{1e01b}"
+cc 0b2ed6999869ee800ab4ca81fa24616eae48af76ec196a64a56c21849c0e9531 # shrinks to string = "", width = 7
