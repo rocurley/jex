@@ -747,27 +747,42 @@ mod tests {
     fn unit_advancing_terminates() {
         check_advancing_terminates(vec![json![{}]]);
     }
+    fn check_lines(values: Vec<Value>) {
+        let jsons: Vec<JV> = values.iter().map(|v| v.into()).collect();
+        let folds = HashSet::new();
+        let width = u16::MAX;
+        let mut expected_lines = json_to_lines(values.iter()).into_iter();
+        if let Some(mut cursor) = GlobalCursor::new(jsons.into(), width, &folds) {
+            let mut actual_lines = Vec::new();
+            actual_lines.push(cursor.current_line());
+            let expected_line = expected_lines
+                .next()
+                .expect("Expected lines shorter than actual lines");
+            let expected = LineCursor::new_at_start(expected_line.render(), width)
+                .current()
+                .unwrap();
+            assert_eq!(cursor.current_line(), expected);
+            while let Some(()) = cursor.advance(&folds, width) {
+                let expected_line = expected_lines
+                    .next()
+                    .expect("Expected lines shorter than actual lines");
+                let expected = LineCursor::new_at_start(expected_line.render(), width)
+                    .current()
+                    .unwrap();
+                assert_eq!(cursor.current_line(), expected);
+            }
+        }
+        assert!(expected_lines.next().is_none());
+    }
     proptest! {
         #[test]
         fn prop_lines(values in proptest::collection::vec(arb_json(), 1..10)) {
-            let jsons : Vec<JV> = values.iter().map(|v| v.into()).collect();
-            let folds = HashSet::new();
-            let width = u16::MAX;
-            let mut expected_lines = json_to_lines(values.iter()).into_iter();
-            if let Some(mut cursor) = GlobalCursor::new(jsons.into(), width, &folds) {
-                let mut actual_lines = Vec::new();
-                actual_lines.push(cursor.current_line());
-                let expected_line = expected_lines.next().expect("Expected lines shorter than actual lines");
-                let expected = LineCursor::new_at_start(expected_line.render(), width).current().unwrap();
-                assert_eq!(cursor.current_line(), expected);
-                while let Some(()) = cursor.advance(&folds, width) {
-                    let expected_line = expected_lines.next().expect("Expected lines shorter than actual lines");
-                    let expected = LineCursor::new_at_start(expected_line.render(), width).current().unwrap();
-                    assert_eq!(cursor.current_line(), expected);
-                }
-            }
-            assert!(expected_lines.next().is_none());
+            check_lines(values);
         }
+    }
+    #[test]
+    fn unit_lines() {
+        check_lines(vec![json!([{ "": null }])]);
     }
     fn check_path_roundtrip(cursor: &ValueCursor, jsons: Rc<[JV]>) {
         let path = cursor.to_path();

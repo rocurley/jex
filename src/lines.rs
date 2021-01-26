@@ -424,6 +424,10 @@ impl LineFragments {
         while delta > ix.byte_index {
             delta -= ix.byte_index + 1;
             ix.fragment_index -= 1;
+            //Can't actually legally point at empty strings, skip over them
+            while self.0[ix.fragment_index].string.len() == 0 {
+                ix.fragment_index -= 1;
+            }
             ix.byte_index = self.0[ix.fragment_index].string.len() - 1;
         }
         ix.byte_index -= delta;
@@ -618,7 +622,9 @@ impl LineCursor {
 
 #[cfg(test)]
 mod tests {
-    use super::{display_width, escaped_str, LineCursor, LineFragment, LineFragments};
+    use super::{
+        display_width, escaped_str, LineCursor, LineFragment, LineFragments, LineFragmentsIndex,
+    };
     use proptest::prelude::*;
     use unicode_width::UnicodeWidthStr;
     proptest! {
@@ -658,7 +664,6 @@ mod tests {
             let actual_cursor = LineCursor::new_at_start(line_fragments.clone(), width);
             let expected = read_cursor_lines(wide_cursor);
             let actual = read_cursor_lines(actual_cursor);
-            assert!(actual.len() >= 2);
             assert_eq!(expected, actual);
         }
         {
@@ -666,7 +671,6 @@ mod tests {
             let actual_cursor = LineCursor::new_at_end(line_fragments, width);
             let expected = read_cursor_lines_reverse(wide_cursor);
             let actual = read_cursor_lines_reverse(actual_cursor);
-            assert!(actual.len() >= 2);
             assert_eq!(expected, actual);
         }
     }
@@ -679,6 +683,7 @@ mod tests {
     #[test]
     fn unit_display_lines() {
         let tests = vec![
+            ("", 7),
             ("aaa\u{e000}¡", 8),
             ("\u{0}\u{0}\u{7f}\u{3fffe}®\u{e000}A0\u{3fffe}𠀀\"", 8),
         ];
@@ -700,5 +705,46 @@ mod tests {
             let actual: String = line.content.iter().map(|span| span.text.as_str()).collect();
             assert_eq!(actual, expected, "Test failure for {:?}", string);
         }
+    }
+    fn strings_to_fragments(strings: Vec<String>) -> LineFragments {
+        let content = strings
+            .into_iter()
+            .map(|s| LineFragment::new_unstyled(s, true))
+            .collect();
+        LineFragments::new(content)
+    }
+    fn arb_fragments() -> impl Strategy<Value = LineFragments> {
+        proptest::collection::vec(".*", 1..10).prop_map(strings_to_fragments)
+    }
+    fn byte_offset_in_fragments(fragments: &LineFragments) -> impl Strategy<Value = usize> {
+        0..=fragments.to_global_byte_offset(fragments.end_index())
+    }
+    fn add_sub_byte_offset_input() -> impl Strategy<Value = (LineFragments, usize, usize)> {
+        arb_fragments().prop_flat_map(|f| {
+            let x = byte_offset_in_fragments(&f);
+            let y = byte_offset_in_fragments(&f);
+            (Just(f), x, y)
+        })
+    }
+    fn check_add_sub_byte_offsets(fragments: LineFragments, x: usize, y: usize) {
+        let start = fragments.from_global_byte_offset(x);
+        let y_ix = if y > x {
+            fragments.add_byte_offset(start, y - x)
+        } else {
+            fragments.sub_byte_offset(start, x - y)
+        };
+        assert_eq!(fragments.to_global_byte_offset(y_ix), y);
+    }
+    proptest! {
+        #[test]
+        fn prop_add_sub_byte_offset((fragments, x, y) in add_sub_byte_offset_input()) {
+            check_add_sub_byte_offsets(fragments, x, y)
+        }
+    }
+    #[test]
+    fn unit_add_sub_byte_offset() {
+        let strings = vec!["¡".to_string(), "".to_string(), "a".to_string()];
+        let fragments = strings_to_fragments(strings);
+        check_add_sub_byte_offsets(fragments, 3, 0)
     }
 }
