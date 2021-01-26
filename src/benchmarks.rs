@@ -81,6 +81,20 @@ fn bench_scroll_long_string(c: &mut Criterion) {
     });
 }
 
+fn bench_render_long_string(c: &mut Criterion) {
+    c.bench_function("bench_render_long_string", |bench| {
+        let path = "testdata/war-and-peace.json";
+        let f = fs::File::open(&path).expect("couldn't open test file");
+        let r = io::BufReader::new(f);
+        let rect = Rect::new(0, 0, 100, 100);
+        let initial_layout = JexLayout::new(rect, false);
+        let mut app =
+            App::new(r, path.to_string(), initial_layout).expect("couldn't initalize app");
+        let view = &mut app.focused_view_mut().view;
+        bench.iter(|| view.render(rect, true))
+    });
+}
+
 struct Profiler<'a> {
     profiler: std::sync::MutexGuard<'a, cpuprofiler::Profiler>,
 }
@@ -110,5 +124,6 @@ criterion_group!(
         bench_load_indirect,
         bench_load_native,
         bench_scroll_long_string,
+        bench_render_long_string,
 );
 criterion_main!(benches);
