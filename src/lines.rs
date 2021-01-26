@@ -321,7 +321,7 @@ impl LineFragment {
         let text = if self.is_escaped {
             escaped_str(&self.string.as_str()[range])
         } else {
-            self.string.as_str().to_string()
+            self.string.as_str()[range].to_string()
         };
         UnstyledSpan {
             text,
@@ -340,7 +340,8 @@ pub struct LineFragmentsIndex {
 }
 
 impl LineFragments {
-    fn new(v: Vec<LineFragment>) -> Self {
+    fn new(mut v: Vec<LineFragment>) -> Self {
+        v.retain(|f| f.string.len() != 0);
         assert_ne!(v.len(), 0);
         Self(v)
     }
