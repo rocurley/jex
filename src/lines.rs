@@ -1,5 +1,5 @@
 use crate::jq::jv::JVString;
-use std::{cell::RefCell, io::Write, ops::Range, rc::Rc};
+use std::{cell::RefCell, ops::Range, rc::Rc};
 use tui::{
     style::{Color, Modifier, Style},
     text::{Span, Spans},
@@ -31,83 +31,86 @@ pub enum LineContent {
 
 use std::fmt::Debug;
 impl Line {
-    pub fn render(self, is_cursor: bool) -> LineFragments {
-        let indent = LineFragment::new(" ".repeat(self.indent as usize), false, Style::default());
-        let style = if is_cursor {
-            Style::default().bg(Color::Blue)
-        } else {
-            Style::default()
-        };
+    pub fn render(self) -> LineFragments {
+        let indent = LineFragment::new_unstyled(" ".repeat(self.indent as usize), false);
         let mut out = match self.key {
             Some(key) => vec![
                 indent,
-                LineFragment::new("\"", false, Style::default()),
-                LineFragment::new(key, true, Style::default()),
-                LineFragment::new("\" : ", false, Style::default()),
+                LineFragment::new_unstyled("\"", false),
+                LineFragment::new_unstyled(key, true),
+                LineFragment::new_unstyled("\" : ", false),
             ],
             _ => vec![indent],
         };
         match self.content {
             LineContent::Null => {
-                out.push(LineFragment::new("null", false, style));
+                out.push(LineFragment::new("null", false, StyleType::Highlightable));
                 if self.comma {
                     out.push(LineFragment::new_unstyled(",", false));
                 }
             }
             LineContent::String(string) => {
-                out.push(LineFragment::new(string, true, style));
+                out.push(LineFragment::new(string, true, StyleType::Highlightable));
                 if self.comma {
                     out.push(LineFragment::new_unstyled(",", false));
                 }
             }
             LineContent::Bool(b) => {
-                out.push(LineFragment::new(b.to_string(), false, style));
+                out.push(LineFragment::new(
+                    b.to_string(),
+                    false,
+                    StyleType::Highlightable,
+                ));
                 if self.comma {
                     out.push(LineFragment::new_unstyled(",", false));
                 }
             }
             LineContent::Number(x) => {
-                out.push(LineFragment::new(x.to_string(), false, style));
+                out.push(LineFragment::new(
+                    x.to_string(),
+                    false,
+                    StyleType::Highlightable,
+                ));
                 if self.comma {
                     out.push(LineFragment::new_unstyled(",", false));
                 }
             }
             LineContent::FoldedArray(children) => {
-                out.push(LineFragment::new("[...]", false, style));
+                out.push(LineFragment::new("[...]", false, StyleType::Highlightable));
                 if self.comma {
                     out.push(LineFragment::new_unstyled(",", false));
                 }
                 out.push(LineFragment::new(
                     format!(" ({} children)", children),
                     false,
-                    Style::default().add_modifier(Modifier::DIM),
+                    StyleType::Background,
                 ));
             }
             LineContent::ArrayStart => {
-                out.push(LineFragment::new("[", false, style));
+                out.push(LineFragment::new("[", false, StyleType::Highlightable));
             }
             LineContent::ArrayEnd => {
-                out.push(LineFragment::new("]", false, style));
+                out.push(LineFragment::new("]", false, StyleType::Highlightable));
                 if self.comma {
                     out.push(LineFragment::new_unstyled(",", false));
                 }
             }
             LineContent::FoldedObject(children) => {
-                out.push(LineFragment::new("{...}", false, style));
+                out.push(LineFragment::new("{...}", false, StyleType::Highlightable));
                 if self.comma {
                     out.push(LineFragment::new_unstyled(",", false));
                 }
                 out.push(LineFragment::new(
                     format!(" ({} children)", children),
                     false,
-                    Style::default().add_modifier(Modifier::DIM),
+                    StyleType::Background,
                 ));
             }
             LineContent::ObjectStart => {
-                out.push(LineFragment::new("{", false, style));
+                out.push(LineFragment::new("{", false, StyleType::Highlightable));
             }
             LineContent::ObjectEnd => {
-                out.push(LineFragment::new("}", false, style));
+                out.push(LineFragment::new("}", false, StyleType::Highlightable));
                 if self.comma {
                     out.push(LineFragment::new_unstyled(",", false));
                 }
@@ -184,11 +187,48 @@ fn display_width(c: char) -> u8 {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StrLine {
     pub is_start: bool,
     pub is_end: bool,
-    pub content: Spans<'static>,
+    pub content: Vec<UnstyledSpan>,
+}
+
+impl StrLine {
+    pub fn to_spans(self, is_cursor: bool) -> Spans<'static> {
+        let v: Vec<Span> = self
+            .content
+            .into_iter()
+            .map(|unstyled| {
+                let style = unstyled.style_type.to_style(is_cursor);
+                Span::styled(unstyled.text, style)
+            })
+            .collect();
+        v.into()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnstyledSpan {
+    style_type: StyleType,
+    text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StyleType {
+    Unhighlightable,
+    Highlightable,
+    Background,
+}
+
+impl StyleType {
+    fn to_style(self, is_cursor: bool) -> Style {
+        match self {
+            StyleType::Highlightable if is_cursor => Style::default().bg(Color::Blue),
+            StyleType::Unhighlightable | StyleType::Highlightable => Style::default(),
+            StyleType::Background => Style::default().add_modifier(Modifier::DIM),
+        }
+    }
 }
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy, PartialOrd, Ord)]
@@ -239,15 +279,15 @@ impl From<JVString> for StringLike {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct LineFragment {
     string: StringLike,
     is_escaped: bool,
-    style: Style,
+    style: StyleType,
 }
 
 impl LineFragment {
-    fn new<S: Into<StringLike>>(s: S, is_escaped: bool, style: Style) -> Self {
+    fn new<S: Into<StringLike>>(s: S, is_escaped: bool, style: StyleType) -> Self {
         LineFragment {
             string: s.into(),
             is_escaped,
@@ -258,7 +298,7 @@ impl LineFragment {
         LineFragment {
             string: s.into(),
             is_escaped,
-            style: Style::default(),
+            style: StyleType::Unhighlightable,
         }
     }
     fn take_width(&self, from: usize, target_width: u16) -> (Range<usize>, u16) {
@@ -277,13 +317,16 @@ impl LineFragment {
             (from..from + width, width as u16)
         }
     }
-    fn span(&self, range: Range<usize>) -> Span<'static> {
-        let s = if self.is_escaped {
+    fn span(&self, range: Range<usize>) -> UnstyledSpan {
+        let text = if self.is_escaped {
             escaped_str(&self.string.as_str()[range])
         } else {
             self.string.as_str().to_string()
         };
-        Span::styled(s, self.style)
+        UnstyledSpan {
+            text,
+            style_type: self.style,
+        }
     }
 }
 
@@ -330,7 +373,7 @@ impl LineFragments {
         }
         (from..current, width)
     }
-    fn spans(&self, range: Range<LineFragmentsIndex>) -> Spans<'static> {
+    fn spans(&self, range: Range<LineFragmentsIndex>) -> Vec<UnstyledSpan> {
         self.0
             .iter()
             .enumerate()
@@ -596,8 +639,7 @@ fn take_width(s: &str, target_width: u16) -> (&str, u16) {
 
 #[cfg(test)]
 mod tests {
-    use super::{display_width, escaped_str, LineCursor, StrLine, StringLike};
-    use crate::jq::jv::JVString;
+    use super::{display_width, escaped_str, LineCursor, LineFragment, LineFragments};
     use proptest::prelude::*;
     use unicode_width::UnicodeWidthStr;
     proptest! {
@@ -612,7 +654,7 @@ mod tests {
     fn read_cursor_lines_reverse(mut cursor: LineCursor) -> String {
         let mut out = String::new();
         while let Some(line) = cursor.current() {
-            let mut s = line.to_string();
+            let mut s: String = line.content.iter().map(|span| span.text).collect();
             assert!(s.width() <= cursor.width as usize);
             std::mem::swap(&mut out, &mut s);
             out.extend(s.chars());
@@ -623,26 +665,26 @@ mod tests {
     fn read_cursor_lines(mut cursor: LineCursor) -> String {
         let mut out = String::new();
         while let Some(line) = cursor.current() {
-            let s = line.to_string();
+            let mut s: String = line.content.iter().map(|span| span.text).collect();
             assert!(s.width() <= cursor.width as usize);
             out.extend(s.chars());
             cursor.move_next();
         }
         out
     }
-    fn check_lines(string: &str, width: u16) {
-        let value = JVString::new(&string);
+    fn check_lines(string: String, width: u16) {
+        let line_fragments = LineFragments::new(vec![LineFragment::new_unstyled(string, true)]);
         {
-            let wide_cursor = LineCursor::new_at_start(StringLike::JV(value.clone()), u16::MAX);
-            let actual_cursor = LineCursor::new_at_start(StringLike::JV(value.clone()), width);
+            let wide_cursor = LineCursor::new_at_start(line_fragments, u16::MAX);
+            let actual_cursor = LineCursor::new_at_start(line_fragments, width);
             let expected = read_cursor_lines(wide_cursor);
             let actual = read_cursor_lines(actual_cursor);
             assert!(actual.len() >= 2);
             assert_eq!(expected, actual);
         }
         {
-            let wide_cursor = LineCursor::new_at_end(StringLike::JV(value.clone()), u16::MAX);
-            let actual_cursor = LineCursor::new_at_end(StringLike::JV(value), width);
+            let wide_cursor = LineCursor::new_at_end(line_fragments, u16::MAX);
+            let actual_cursor = LineCursor::new_at_end(line_fragments, width);
             let expected = read_cursor_lines_reverse(wide_cursor);
             let actual = read_cursor_lines_reverse(actual_cursor);
             assert!(actual.len() >= 2);
@@ -652,7 +694,7 @@ mod tests {
     proptest! {
         #[test]
         fn prop_display_lines(string in any::<String>(), width in 7..u16::MAX) {
-            check_lines(&string, width);
+            check_lines(string, width);
         }
     }
     #[test]
@@ -662,24 +704,22 @@ mod tests {
             ("\u{0}\u{0}\u{7f}\u{3fffe}®\u{e000}A0\u{3fffe}𠀀\"", 8),
         ];
         for (string, width) in tests {
-            check_lines(&string, width);
+            check_lines(string.to_owned(), width);
         }
     }
     #[test]
     fn unit_to_string() {
         let tests = vec![
-            ("", r#""""#),
-            ("Hello world!", r#""Hello world!""#),
-            ("Hello\nworld!", r#""Hello\nworld!""#),
+            ("", r#""#),
+            ("Hello world!", r#"Hello world!"#),
+            ("Hello\nworld!", r#"Hello\nworld!"#),
         ];
-        for (raw, expected) in tests {
-            let line = StrLine {
-                is_start: true,
-                is_end: true,
-                raw,
-                start: 0,
-            };
-            assert_eq!(line.to_string(), expected, "Test failure for {:?}", raw);
+        for (string, expected) in tests {
+            let line_fragments = LineFragments::new(vec![LineFragment::new_unstyled(string, true)]);
+            let actual_cursor = LineCursor::new_at_start(line_fragments, 10000);
+            let line = actual_cursor.current().unwrap();
+            let actual: String = line.content.iter().map(|span| span.text).collect();
+            assert_eq!(actual, expected, "Test failure for {:?}", string);
         }
     }
 }

@@ -1,14 +1,11 @@
 use crate::{
     jq::jv::{JVArray, JVObject, JVString, OwnedObjectIterator, JV},
-    lines::{escaped_str, Line, LineContent, LineCursor, StringLike},
+    lines::{Line, LineContent, LineCursor, StrLine},
 };
 use log::trace;
 use regex::Regex;
 use std::{borrow::Cow, cmp::Ordering, collections::HashSet, fmt, rc::Rc};
-use tui::{
-    layout::Rect,
-    text::{Span, Spans},
-};
+use tui::{layout::Rect, text::Spans};
 
 // Requirements:
 // * Produce the current line
@@ -276,41 +273,38 @@ impl CursorFrame {
     }
 }
 
-#[derive(PartialEq, Eq, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct GlobalCursor {
     pub value_cursor: ValueCursor,
-    pub line_cursor: Option<LineCursor>,
+    pub line_cursor: LineCursor,
 }
 impl GlobalCursor {
-    pub fn new(jsons: Rc<[JV]>, width: u16) -> Option<Self> {
+    pub fn new(jsons: Rc<[JV]>, width: u16, folds: &HashSet<(usize, Vec<usize>)>) -> Option<Self> {
         let cursor = ValueCursor::new(jsons)?;
-        let line_cursor = match &cursor.focus {
-            // Note that this is only valid because a top-level string renders across the entire
-            // rect, so rect width is equal to the line width
-            &JV::String(ref s) => Some(LineCursor::new_at_start(StringLike::JV(s.clone()), width)),
-            _ => None,
-        };
+        let line = cursor.current_line(folds, width);
+        let line_cursor = LineCursor::new_at_start(line.render(), width);
         Some(GlobalCursor {
             value_cursor: cursor,
             line_cursor,
         })
     }
-    pub fn new_end(jsons: Rc<[JV]>, width: u16) -> Option<Self> {
+    pub fn new_end(
+        jsons: Rc<[JV]>,
+        width: u16,
+        folds: &HashSet<(usize, Vec<usize>)>,
+    ) -> Option<Self> {
         let cursor = ValueCursor::new_end(jsons)?;
-        let line_cursor = match &cursor.focus {
-            // Note that this is only valid because a top-level string renders across the entire
-            // rect, so rect width is equal to the line width
-            &JV::String(ref s) => Some(LineCursor::new_at_end(StringLike::JV(s.clone()), width)),
-            _ => None,
-        };
+        let line = cursor.current_line(folds, width);
+        let line_cursor = LineCursor::new_at_start(line.render(), width);
         Some(GlobalCursor {
             value_cursor: cursor,
             line_cursor,
         })
     }
-    pub fn current_line(&self, folds: &HashSet<(usize, Vec<usize>)>, width: u16) -> Line {
-        self.value_cursor
-            .current_line(folds, self.line_cursor.as_ref(), width)
+    pub fn current_line(&self, folds: &HashSet<(usize, Vec<usize>)>, width: u16) -> StrLine {
+        self.line_cursor
+            .current()
+            .expect("Global cursor should not be able to have invalid line cursor")
     }
     pub fn render_lines(
         &mut self,
@@ -322,7 +316,7 @@ impl GlobalCursor {
         self.resize_to(rect);
         lines.push(
             self.current_line(folds, rect.width)
-                .render(Some(&self.value_cursor) == cursor),
+                .to_spans(Some(&self.value_cursor) == cursor),
         );
         while lines.len() < rect.height as usize {
             if let None = self.advance(folds, rect.width) {
@@ -330,67 +324,52 @@ impl GlobalCursor {
             };
             lines.push(
                 self.current_line(folds, rect.width)
-                    .render(Some(&self.value_cursor) == cursor),
+                    .to_spans(Some(&self.value_cursor) == cursor),
             );
         }
         lines
     }
     pub fn advance(&mut self, folds: &HashSet<(usize, Vec<usize>)>, width: u16) -> Option<()> {
         trace!("Advancing global cursor (width={}): {:#?}", width, self);
-        if let Some(lc) = self.line_cursor.as_mut() {
-            lc.move_next();
-            if lc.current().is_some() {
-                trace!("Advanced global cursor {:#?}", self);
-                return Some(());
-            } else {
-                lc.move_prev();
-            }
+        let lc = &mut self.line_cursor;
+        lc.move_next();
+        if lc.current().is_some() {
+            trace!("Advanced global cursor {:#?}", self);
+            return Some(());
+        } else {
+            lc.move_prev();
         }
         self.value_cursor.advance(folds)?;
-        if let JV::String(ref value) = &self.value_cursor.focus {
-            let width = self.value_cursor.content_width(width);
-            self.line_cursor = Some(LineCursor::new_at_start(
-                StringLike::JV(value.clone()),
-                width,
-            ));
-        } else {
-            self.line_cursor = None;
-        }
+        let line = self.value_cursor.current_line(folds, width);
+        self.line_cursor = LineCursor::new_at_start(line.render(), width);
         trace!("Advanced global cursor {:#?}", self);
         Some(())
     }
     pub fn regress(&mut self, folds: &HashSet<(usize, Vec<usize>)>, width: u16) -> Option<()> {
-        if let Some(lc) = self.line_cursor.as_mut() {
-            lc.move_prev();
-            if lc.current().is_some() {
-                return Some(());
-            } else {
-                lc.move_next();
-            }
+        let lc = &mut self.line_cursor;
+        lc.move_prev();
+        if lc.current().is_some() {
+            return Some(());
+        } else {
+            lc.move_next();
         }
         self.value_cursor.regress(folds)?;
-        if let JV::String(ref value) = &self.value_cursor.focus {
-            let width = self.value_cursor.content_width(width);
-            self.line_cursor = Some(LineCursor::new_at_end(StringLike::JV(value.clone()), width));
-        } else {
-            self.line_cursor = None;
-        }
+        let line = self.value_cursor.current_line(folds, width);
+        self.line_cursor = LineCursor::new_at_end(line.render(), width);
         Some(())
     }
     pub fn to_path(&self) -> GlobalPath {
-        let current_line = self.line_cursor.as_ref().map_or(0, |c| {
-            c.current_line()
-                .expect("GlobalCursor should not have invalid LineCursor")
-        });
+        let current_line = self
+            .line_cursor
+            .current_line()
+            .expect("GlobalCursor should not have invalid LineCursor");
         GlobalPath {
             value_path: self.value_cursor.to_path(),
             current_line,
         }
     }
     pub fn resize_to(&mut self, rect: Rect) {
-        if let Some(lc) = self.line_cursor.as_mut() {
-            lc.set_width(rect.width);
-        }
+        self.line_cursor.set_width(rect.width);
     }
 }
 
@@ -478,13 +457,13 @@ impl ValueCursor {
             focus_position: path.focus_position,
         }
     }
-    pub fn current_key(&self) -> Option<&str> {
+    pub fn current_key(&self) -> Option<JVString> {
         match self.focus_position {
             FocusPosition::End => None,
             _ => match self.frames.last() {
                 None => None,
                 Some(CursorFrame::Array { .. }) => None,
-                Some(CursorFrame::Object { key, .. }) => Some(key.value()),
+                Some(CursorFrame::Object { key, .. }) => Some(key.clone()),
             },
         }
     }
@@ -492,28 +471,7 @@ impl ValueCursor {
         let desired_indent = (self.frames.len() * 2) as u16;
         std::cmp::min(desired_indent, width - 7)
     }
-    pub fn content_width(&self, width: u16) -> u16 {
-        let key = self.current_key();
-        let indent = self.current_indent(width);
-        let indent_span = Span::raw(" ".repeat(indent as usize));
-        let out = match key {
-            Some(key) => vec![
-                indent_span,
-                Span::raw(format!("\"{}\"", escaped_str(key))),
-                Span::raw(" : "),
-            ],
-            _ => vec![indent_span],
-        };
-        let consumed_width: u16 = out.iter().map(|span| span.width() as u16).sum();
-        let remainining_width = width.saturating_sub(consumed_width);
-        std::cmp::max(7, remainining_width)
-    }
-    pub fn current_line<'a>(
-        &'a self,
-        folds: &HashSet<(usize, Vec<usize>)>,
-        line_cursor: Option<&'a LineCursor>,
-        width: u16,
-    ) -> Line<'a> {
+    pub fn current_line<'a>(&'a self, folds: &HashSet<(usize, Vec<usize>)>, width: u16) -> Line {
         use FocusPosition::*;
         let folded = folds.contains(&self.to_path().strip_position());
         let content = match (&self.focus, self.focus_position, folded) {
@@ -526,14 +484,7 @@ impl ValueCursor {
             (JV::Null(_), Value, _) => LineContent::Null,
             (JV::Bool(b), Value, _) => LineContent::Bool(b.value()),
             (JV::Number(x), Value, _) => LineContent::Number(x.value()),
-            (JV::String(_), Value, _) => {
-                // TODO: this is bad for many reasons. Ideally in the future every type will use
-                // LineCursor (since keys could be very long, for example). But at the very least,
-                // we should make it so LineCursor and ValueCursor have the same semantics about
-                // moving: either they should both refuse to move off the edge, or both should
-                // allow it.
-                LineContent::String(line_cursor.unwrap().current().unwrap())
-            }
+            (JV::String(s), Value, _) => LineContent::String(s.clone()),
             triple => panic!("Illegal json/focus_position/folded triple: {:?}", triple),
         };
         let key = self.current_key();
@@ -775,7 +726,7 @@ mod tests {
         testing::{arb_json, json_to_lines},
     };
     use pretty_assertions::assert_eq;
-    use proptest::{prelude::*, proptest};
+    use proptest::proptest;
     use serde_json::{json, Value};
     use std::{collections::HashSet, rc::Rc};
 
@@ -802,7 +753,7 @@ mod tests {
             let folds = HashSet::new();
             let width = u16::MAX;
             let mut expected_lines = json_to_lines(values.iter()).into_iter();
-            if let Some(mut cursor) = GlobalCursor::new(jsons.into(), width) {
+            if let Some(mut cursor) = GlobalCursor::new(jsons.into(), width, &folds) {
                 let mut actual_lines = Vec::new();
                 actual_lines.push(cursor.current_line(&folds, width));
                 assert_eq!(cursor.current_line(&folds, width), expected_lines.next().expect("Expected lines shorter than actual lines"));
@@ -847,7 +798,7 @@ mod tests {
     fn hashable_cursor_key(cursor: &GlobalCursor) -> impl std::hash::Hash + Eq {
         (
             cursor.value_cursor.to_path(),
-            cursor.line_cursor.as_ref().map(|lc| lc.current_line()),
+            cursor.line_cursor.current_line(),
         )
     }
     proptest! {
@@ -856,7 +807,7 @@ mod tests {
             let jsons : Rc<[JV]> = jsons.into();
             let folds = HashSet::new();
             let mut seen = HashSet::new();
-            if let Some(mut cursor) = GlobalCursor::new(jsons.clone(), width) {
+            if let Some(mut cursor) = GlobalCursor::new(jsons.clone(), width, &folds) {
                 check_advance_regress(&cursor, &folds, width);
                 while let Some(()) = cursor.advance(&folds, width) {
                     let key = hashable_cursor_key(&cursor);
@@ -886,7 +837,7 @@ mod tests {
             let jsons: Rc<[JV]> = jsons.into();
             let folds = HashSet::new();
             let mut seen = HashSet::new();
-            if let Some(mut cursor) = GlobalCursor::new(jsons.clone(), width) {
+            if let Some(mut cursor) = GlobalCursor::new(jsons.clone(), width, &folds) {
                 dbg!(&cursor);
                 check_advance_regress(&cursor, &folds, width);
                 while let Some(()) = cursor.advance(&folds, width) {
