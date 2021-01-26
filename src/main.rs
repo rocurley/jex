@@ -352,13 +352,18 @@ fn run(json_path: String) -> Result<(), io::Error> {
                         app.search(true);
                     }
                     KeyCode::Home => {
-                        view.scroll = GlobalCursor::new(view.values.clone(), view.rect.width)
-                            .expect("values should still exist");
+                        view.scroll =
+                            GlobalCursor::new(view.values.clone(), view.rect.width, &view.folds)
+                                .expect("values should still exist");
                         view.cursor = view.scroll.value_cursor.clone();
                     }
                     KeyCode::End => {
-                        view.scroll = GlobalCursor::new_end(view.values.clone(), view.rect.width)
-                            .expect("values should still exist");
+                        view.scroll = GlobalCursor::new_end(
+                            view.values.clone(),
+                            view.rect.width,
+                            &view.folds,
+                        )
+                        .expect("values should still exist");
                         view.cursor = view.scroll.value_cursor.clone();
                     }
                     _ => {}

@@ -196,7 +196,7 @@ impl App {
             .visible_range(&view.folds)
             .contains_value(&view.cursor.to_path())
         {
-            view.scroll = GlobalCursor::new(view.values.clone(), view.rect.width)
+            view.scroll = GlobalCursor::new(view.values.clone(), view.rect.width, &view.folds)
                 .expect("values should still exist");
         }
     }

@@ -5,7 +5,7 @@ use crate::{
         query::{run_jq_query, JQ},
     },
     layout::JexLayout,
-    lines::{Line, LineContent, StrLine},
+    lines::LineCursor,
 };
 use log::trace;
 use serde_json::Deserializer;
@@ -263,8 +263,8 @@ impl JsonView {
     pub fn new<V: Into<Rc<[JV]>>>(values: V, rect: Rect) -> Option<Self> {
         let values: Rc<[JV]> = values.into();
         let cursor = ValueCursor::new(values.clone())?;
-        let scroll = GlobalCursor::new(values.clone(), rect.width)?;
         let folds = HashSet::new();
+        let scroll = GlobalCursor::new(values.clone(), rect.width, &folds)?;
         Some(JsonView {
             scroll,
             values,
@@ -296,21 +296,15 @@ impl JsonView {
             Err(err) => View::Error(err),
         }
     }
-    fn is_last_line(line: Line) -> bool {
-        match line.content {
-            LineContent::String(StrLine { is_end, .. }) => is_end,
-            _ => true,
-        }
-    }
     pub fn visible_range(&self, folds: &HashSet<(usize, Vec<usize>)>) -> GlobalPathRange {
         let mut scroll = self.scroll.clone();
         let start = scroll.to_path();
-        let mut end_is_line_end = Self::is_last_line(scroll.current_line(folds, self.rect.width));
+        let mut end_is_line_end = scroll.current_line().is_end;
         for _ in 1..self.rect.height {
             if let None = scroll.advance(folds, self.rect.width) {
                 break;
             };
-            end_is_line_end = Self::is_last_line(scroll.current_line(folds, self.rect.width));
+            end_is_line_end = scroll.current_line().is_end;
         }
         let end = scroll.to_path();
         GlobalPathRange {
@@ -340,10 +334,12 @@ impl JsonView {
                 .value_cursor
                 .descends_from_or_matches(&self.cursor)
             {
+                let line = self.cursor.current_line(&self.folds, self.rect.width);
+                let line_cursor = LineCursor::new_at_start(line.render(), self.rect.width);
                 self.scroll = GlobalCursor {
                     value_cursor: self.cursor.clone(),
                     // Note: this is okay because you can only fold objects and arrays
-                    line_cursor: None,
+                    line_cursor,
                 };
             }
         }
@@ -466,7 +462,8 @@ mod tests {
             .collect::<Result<Vec<JV>, _>>()
             .unwrap();
         let mut view = JsonView::new(jsons, DUMMY_RECT).unwrap();
-        view.scroll = GlobalCursor::new_end(view.values.clone(), DUMMY_RECT.width).unwrap();
+        view.scroll =
+            GlobalCursor::new_end(view.values.clone(), DUMMY_RECT.width, &HashSet::new()).unwrap();
         view.cursor = view.scroll.value_cursor.clone();
         let line_limit = 20;
         let rect = Rect {

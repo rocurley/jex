@@ -349,9 +349,9 @@ impl LineFragments {
         target_width: u16,
     ) -> (Range<LineFragmentsIndex>, u16) {
         let mut current = from;
-        let width = 0;
+        let mut width = 0;
         loop {
-            let fragment = self.0[current.fragment_index];
+            let fragment = &self.0[current.fragment_index];
             let (fragment_range, fragment_width) =
                 fragment.take_width(current.byte_index, target_width - width);
             width += fragment_width;

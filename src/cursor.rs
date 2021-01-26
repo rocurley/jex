@@ -301,7 +301,7 @@ impl GlobalCursor {
             line_cursor,
         })
     }
-    pub fn current_line(&self, folds: &HashSet<(usize, Vec<usize>)>, width: u16) -> StrLine {
+    pub fn current_line(&self) -> StrLine {
         self.line_cursor
             .current()
             .expect("Global cursor should not be able to have invalid line cursor")
@@ -315,7 +315,7 @@ impl GlobalCursor {
         let mut lines = Vec::with_capacity(rect.height as usize);
         self.resize_to(rect);
         lines.push(
-            self.current_line(folds, rect.width)
+            self.current_line()
                 .to_spans(Some(&self.value_cursor) == cursor),
         );
         while lines.len() < rect.height as usize {
@@ -323,7 +323,7 @@ impl GlobalCursor {
                 break;
             };
             lines.push(
-                self.current_line(folds, rect.width)
+                self.current_line()
                     .to_spans(Some(&self.value_cursor) == cursor),
             );
         }
@@ -755,10 +755,10 @@ mod tests {
             let mut expected_lines = json_to_lines(values.iter()).into_iter();
             if let Some(mut cursor) = GlobalCursor::new(jsons.into(), width, &folds) {
                 let mut actual_lines = Vec::new();
-                actual_lines.push(cursor.current_line(&folds, width));
-                assert_eq!(cursor.current_line(&folds, width), expected_lines.next().expect("Expected lines shorter than actual lines"));
+                actual_lines.push(cursor.current_line());
+                assert_eq!(cursor.current_line(), expected_lines.next().expect("Expected lines shorter than actual lines"));
                 while let Some(()) = cursor.advance(&folds, width) {
-                    assert_eq!(cursor.current_line(&folds, width), expected_lines.next().expect("Expected lines shorter than actual lines"));
+                    assert_eq!(cursor.current_line(), expected_lines.next().expect("Expected lines shorter than actual lines"));
                 }
             }
             assert!(expected_lines.next().is_none());
