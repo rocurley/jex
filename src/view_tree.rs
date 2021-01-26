@@ -428,6 +428,12 @@ mod tests {
         width: 135,
         height: 70,
     };
+    const TINY_RECT: Rect = Rect {
+        x: 1,
+        y: 1,
+        width: 15,
+        height: 20,
+    };
     fn check_folds(values: Vec<Value>) {
         let jsons: Vec<JV> = values.iter().map(|v| v.into()).collect();
         let mut view = match JsonView::new(jsons, DUMMY_RECT) {
@@ -501,5 +507,17 @@ mod tests {
             view.render(DUMMY_RECT, true);
             right_view.render(right_rect, true);
         }
+    }
+    #[test]
+    fn unit_render_small() {
+        let json_path = "testdata/example.json";
+        let f = fs::File::open(&json_path).unwrap();
+        let r = io::BufReader::new(f);
+        let jsons: Vec<JV> = Deserializer::from_reader(r)
+            .into_iter::<JV>()
+            .collect::<Result<Vec<JV>, _>>()
+            .unwrap();
+        let view = JsonView::new(jsons, TINY_RECT).unwrap();
+        view.render(TINY_RECT, true);
     }
 }

@@ -50,7 +50,9 @@ impl Line {
                 }
             }
             LineContent::String(string) => {
+                out.push(LineFragment::new("\"", false, StyleType::Highlightable));
                 out.push(LineFragment::new(string, true, StyleType::Highlightable));
+                out.push(LineFragment::new("\"", false, StyleType::Highlightable));
                 if self.comma {
                     out.push(LineFragment::new_unstyled(",", false));
                 }
@@ -376,7 +378,7 @@ impl LineFragments {
         (from..current, width)
     }
     fn spans(&self, range: Range<LineFragmentsIndex>) -> Vec<UnstyledSpan> {
-        self.0
+        self.0[range.start.fragment_index..=range.end.fragment_index]
             .iter()
             .enumerate()
             .map(|(i, fragment)| {
