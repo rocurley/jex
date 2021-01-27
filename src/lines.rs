@@ -697,14 +697,15 @@ mod tests {
     }
     proptest! {
         #[test]
-        fn prop_display_lines(string in any::<String>(), width in 7..u16::MAX) {
+        fn prop_display_lines(string in "..*", width in 7..u16::MAX) {
             check_lines(string, width);
         }
     }
     #[test]
     fn unit_display_lines() {
         let tests = vec![
-            ("", 7),
+            ("a", 7),
+            (r###"=ෳ,ￒ`-,🕴T"𞺩%ha𑒀uU<"###, 7),
             ("aaa\u{e000}¡", 8),
             ("\u{0}\u{0}\u{7f}\u{3fffe}®\u{e000}A0\u{3fffe}𠀀\"", 8),
         ];
@@ -715,7 +716,6 @@ mod tests {
     #[test]
     fn unit_to_string() {
         let tests = vec![
-            ("", r#""#),
             ("Hello world!", r#"Hello world!"#),
             ("Hello\nworld!", r#"Hello\nworld!"#),
         ];
@@ -735,7 +735,7 @@ mod tests {
         LineFragments::new(content)
     }
     fn arb_fragments() -> impl Strategy<Value = LineFragments> {
-        proptest::collection::vec(".*", 1..10).prop_map(strings_to_fragments)
+        proptest::collection::vec("..*", 1..10).prop_map(strings_to_fragments)
     }
     fn byte_offset_in_fragments(fragments: &LineFragments) -> impl Strategy<Value = usize> {
         0..=fragments.to_global_byte_offset(fragments.end_index())
