@@ -145,12 +145,16 @@ pub fn escaped_str(s: &str) -> String {
     String::from_utf8(escaped_raw).expect("Escaped string was not utf-8")
 }
 
-// TODO: Consider an optimized version of this that writes sequences of unescaped characters in one
-// go.
 fn write_escaped_str<W: std::io::Write>(s: &str, w: &mut W) -> std::io::Result<()> {
-    for c in s.chars() {
-        write_escaped_char(c, w)?;
+    let mut range_start = 0;
+    for (i, c) in s.char_indices() {
+        if is_escaped(c) {
+            write!(w, "{}", &s[range_start..i])?;
+            range_start = i + c.len_utf8();
+            write_escaped_char(c, w)?;
+        }
     }
+    write!(w, "{}", &s[range_start..])?;
     Ok(())
 }
 
@@ -172,6 +176,13 @@ fn write_escaped_char<W: std::io::Write>(c: char, w: &mut W) -> std::io::Result<
             Ok(())
         }
         _ => write!(w, "{}", c),
+    }
+}
+
+fn is_escaped(c: char) -> bool {
+    match c {
+        '\"' | '\\' | '\u{08}' | '\u{0C}' | '\n' | '\r' | '\t' => true,
+        _ => is_unicode_escaped(c),
     }
 }
 

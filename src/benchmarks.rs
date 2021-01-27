@@ -7,6 +7,7 @@ use jex::{
         query::{run_jq_query, JQ},
     },
     layout::JexLayout,
+    lines::escaped_str,
     view_tree::View,
 };
 use serde_json::{value::Value, Deserializer};
@@ -95,6 +96,13 @@ fn bench_render_long_string(c: &mut Criterion) {
     });
 }
 
+fn bench_escape_no_escapes(c: &mut Criterion) {
+    c.bench_function("bench_escape_no_escapes", |bench| {
+        let s = std::iter::repeat("a").take(1000).collect::<String>();
+        bench.iter(|| escaped_str(&s))
+    });
+}
+
 struct Profiler<'a> {
     profiler: std::sync::MutexGuard<'a, cpuprofiler::Profiler>,
 }
@@ -125,5 +133,6 @@ criterion_group!(
         bench_load_native,
         bench_scroll_long_string,
         bench_render_long_string,
+        bench_escape_no_escapes,
 );
 criterion_main!(benches);
