@@ -406,6 +406,7 @@ impl LineFragments {
             .sum::<usize>()
             + ix.byte_index
     }
+    #[cfg(test)]
     fn from_global_byte_offset(&self, mut offset: usize) -> LineFragmentsIndex {
         for (fragment_index, fragment) in self.0.iter().enumerate() {
             if offset <= fragment.string.len() {
@@ -648,9 +649,7 @@ impl LineCursor {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        display_width, escaped_str, LineCursor, LineFragment, LineFragments, LineFragmentsIndex,
-    };
+    use super::{display_width, escaped_str, LineCursor, LineFragment, LineFragments};
     use proptest::prelude::*;
     use unicode_width::UnicodeWidthStr;
     proptest! {
