@@ -1,5 +1,5 @@
 use crate::{
-    cursor::{FocusPosition, GlobalCursor, GlobalPath, ValueCursor, ValuePath},
+    cursor::{FocusPosition, GlobalCursor, GlobalPath, LeafCursor, ValuePath},
     jq::{
         jv::JV,
         query::{run_jq_query, JQ},
@@ -254,7 +254,7 @@ impl View {
 pub struct JsonView {
     pub scroll: GlobalCursor,
     pub values: Rc<[JV]>,
-    pub cursor: ValueCursor,
+    pub cursor: LeafCursor,
     pub folds: HashSet<(usize, Vec<usize>)>,
     pub rect: Rect,
 }
@@ -262,7 +262,7 @@ pub struct JsonView {
 impl JsonView {
     pub fn new<V: Into<Rc<[JV]>>>(values: V, rect: Rect) -> Option<Self> {
         let values: Rc<[JV]> = values.into();
-        let cursor = ValueCursor::new(values.clone())?;
+        let cursor = LeafCursor::new(values.clone())?;
         let folds = HashSet::new();
         let scroll = GlobalCursor::new(values.clone(), rect.width, &folds)?;
         Some(JsonView {

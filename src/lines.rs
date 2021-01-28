@@ -8,15 +8,15 @@ use unicode_general_category::{get_general_category, GeneralCategory};
 use unicode_width::UnicodeWidthChar;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Line {
-    pub content: LineContent,
+pub struct Leaf {
+    pub content: LeafContent,
     pub key: Option<JVString>,
     pub indent: u16,
     pub comma: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum LineContent {
+pub enum LeafContent {
     Null,
     Bool(bool),
     Number(f64),
@@ -30,7 +30,7 @@ pub enum LineContent {
 }
 
 use std::fmt::Debug;
-impl Line {
+impl Leaf {
     pub fn render(self) -> LineFragments {
         let indent = LineFragment::new_unstyled(" ".repeat(self.indent as usize), false);
         let mut out = match self.key {
@@ -43,13 +43,13 @@ impl Line {
             _ => vec![indent],
         };
         match self.content {
-            LineContent::Null => {
+            LeafContent::Null => {
                 out.push(LineFragment::new("null", false, StyleType::Highlightable));
                 if self.comma {
                     out.push(LineFragment::new_unstyled(",", false));
                 }
             }
-            LineContent::String(string) => {
+            LeafContent::String(string) => {
                 out.push(LineFragment::new("\"", false, StyleType::Highlightable));
                 out.push(LineFragment::new(string, true, StyleType::Highlightable));
                 out.push(LineFragment::new("\"", false, StyleType::Highlightable));
@@ -57,7 +57,7 @@ impl Line {
                     out.push(LineFragment::new_unstyled(",", false));
                 }
             }
-            LineContent::Bool(b) => {
+            LeafContent::Bool(b) => {
                 out.push(LineFragment::new(
                     b.to_string(),
                     false,
@@ -67,7 +67,7 @@ impl Line {
                     out.push(LineFragment::new_unstyled(",", false));
                 }
             }
-            LineContent::Number(x) => {
+            LeafContent::Number(x) => {
                 out.push(LineFragment::new(
                     x.to_string(),
                     false,
@@ -77,7 +77,7 @@ impl Line {
                     out.push(LineFragment::new_unstyled(",", false));
                 }
             }
-            LineContent::FoldedArray(children) => {
+            LeafContent::FoldedArray(children) => {
                 out.push(LineFragment::new("[...]", false, StyleType::Highlightable));
                 if self.comma {
                     out.push(LineFragment::new_unstyled(",", false));
@@ -88,16 +88,16 @@ impl Line {
                     StyleType::Background,
                 ));
             }
-            LineContent::ArrayStart => {
+            LeafContent::ArrayStart => {
                 out.push(LineFragment::new("[", false, StyleType::Highlightable));
             }
-            LineContent::ArrayEnd => {
+            LeafContent::ArrayEnd => {
                 out.push(LineFragment::new("]", false, StyleType::Highlightable));
                 if self.comma {
                     out.push(LineFragment::new_unstyled(",", false));
                 }
             }
-            LineContent::FoldedObject(children) => {
+            LeafContent::FoldedObject(children) => {
                 out.push(LineFragment::new("{...}", false, StyleType::Highlightable));
                 if self.comma {
                     out.push(LineFragment::new_unstyled(",", false));
@@ -108,10 +108,10 @@ impl Line {
                     StyleType::Background,
                 ));
             }
-            LineContent::ObjectStart => {
+            LeafContent::ObjectStart => {
                 out.push(LineFragment::new("{", false, StyleType::Highlightable));
             }
-            LineContent::ObjectEnd => {
+            LeafContent::ObjectEnd => {
                 out.push(LineFragment::new("}", false, StyleType::Highlightable));
                 if self.comma {
                     out.push(LineFragment::new_unstyled(",", false));
@@ -195,13 +195,11 @@ fn display_width(c: char) -> u8 {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StrLine {
-    pub is_start: bool,
-    pub is_end: bool,
+pub struct UnstyledSpans {
     pub content: Vec<UnstyledSpan>,
 }
 
-impl StrLine {
+impl UnstyledSpans {
     pub fn to_spans(self, is_cursor: bool) -> Spans<'static> {
         let v: Vec<Span> = self
             .content
@@ -462,25 +460,19 @@ impl LineCursor {
     pub fn valid(&self) -> bool {
         matches!(self.position, LineCursorPosition::Valid { .. })
     }
-    pub fn current(&self) -> Option<StrLine> {
+    pub fn current(&self) -> Option<UnstyledSpans> {
         match self.position {
             LineCursorPosition::Start | LineCursorPosition::End => None,
             LineCursorPosition::Valid {
                 start,
                 current_line,
             } => {
-                let is_start = start.fragment_index == 0 && start.byte_index == 0;
                 let line_widths = self.line_widths.borrow();
                 let end = self
                     .content
                     .add_byte_offset(start, line_widths[current_line] as usize);
-                let is_end = self.content.end_index() == end;
                 let content = self.content.spans(start..end);
-                Some(StrLine {
-                    is_start,
-                    is_end,
-                    content,
-                })
+                Some(UnstyledSpans { content })
             }
         }
     }

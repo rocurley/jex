@@ -101,6 +101,15 @@ struct BenchMode {}
 // can do so by making a new root and then copying over the descendents
 // * Lightweight error messages (no search results, can't fold a leaf, can't edit a non-leaf)
 // * Diffs
+//
+// Rendering pipeline:
+// * Vec<JV>
+// * LeafCursor
+// * Leaf
+// * LineFragments
+// * LineCursor
+// * UnstyledSpans
+// * Spans
 
 #[cfg(feature = "dev-tools")]
 fn main() -> Result<(), io::Error> {

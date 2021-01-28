@@ -1,6 +1,6 @@
 use crate::{
     jq::jv::{JVArray, JVObject, JVString, OwnedObjectIterator, JV},
-    lines::{Line, LineContent, LineCursor, StrLine},
+    lines::{Leaf, LeafContent, LineCursor, UnstyledSpans},
 };
 use log::trace;
 use regex::Regex;
@@ -275,12 +275,12 @@ impl CursorFrame {
 
 #[derive(Debug, Clone)]
 pub struct GlobalCursor {
-    pub value_cursor: ValueCursor,
+    pub value_cursor: LeafCursor,
     pub line_cursor: LineCursor,
 }
 impl GlobalCursor {
     pub fn new(jsons: Rc<[JV]>, width: u16, folds: &HashSet<(usize, Vec<usize>)>) -> Option<Self> {
-        let cursor = ValueCursor::new(jsons)?;
+        let cursor = LeafCursor::new(jsons)?;
         let line = cursor.current_line(folds, width);
         let line_cursor = LineCursor::new_at_start(line.render(), width);
         Some(GlobalCursor {
@@ -293,7 +293,7 @@ impl GlobalCursor {
         width: u16,
         folds: &HashSet<(usize, Vec<usize>)>,
     ) -> Option<Self> {
-        let cursor = ValueCursor::new_end(jsons)?;
+        let cursor = LeafCursor::new_end(jsons)?;
         let line = cursor.current_line(folds, width);
         let line_cursor = LineCursor::new_at_start(line.render(), width);
         Some(GlobalCursor {
@@ -301,14 +301,14 @@ impl GlobalCursor {
             line_cursor,
         })
     }
-    pub fn current_line(&self) -> StrLine {
+    pub fn current_line(&self) -> UnstyledSpans {
         self.line_cursor
             .current()
             .expect("Global cursor should not be able to have invalid line cursor")
     }
     pub fn render_lines(
         &mut self,
-        cursor: Option<&ValueCursor>,
+        cursor: Option<&LeafCursor>,
         folds: &HashSet<(usize, Vec<usize>)>,
         rect: Rect,
     ) -> Vec<Spans<'static>> {
@@ -379,7 +379,7 @@ impl GlobalCursor {
 }
 
 #[derive(PartialEq, Eq, Debug, Clone)]
-pub struct ValueCursor {
+pub struct LeafCursor {
     // Top level jsons of the view
     pub jsons: Rc<[JV]>,
     // Index locating the json this cursor is focused (somewhere) on
@@ -394,11 +394,11 @@ pub struct ValueCursor {
     pub focus_position: FocusPosition,
 }
 
-impl ValueCursor {
+impl LeafCursor {
     pub fn new(jsons: Rc<[JV]>) -> Option<Self> {
         let focus = jsons.first()?.clone();
         let focus_position = FocusPosition::starting(&focus);
-        Some(ValueCursor {
+        Some(LeafCursor {
             jsons,
             top_index: 0,
             frames: Vec::new(),
@@ -410,7 +410,7 @@ impl ValueCursor {
         let top_index = jsons.len() - 1;
         let focus = jsons.last()?.clone();
         let focus_position = FocusPosition::ending(&focus);
-        Some(ValueCursor {
+        Some(LeafCursor {
             jsons,
             top_index,
             frames: Vec::new(),
@@ -454,7 +454,7 @@ impl ValueCursor {
                 _ => panic!("Shape of path does not match shape of jsons"),
             }
         }
-        ValueCursor {
+        LeafCursor {
             jsons,
             top_index: path.top_index,
             frames,
@@ -476,20 +476,20 @@ impl ValueCursor {
         let desired_indent = (self.frames.len() * 2) as u16;
         std::cmp::min(desired_indent, width - 7)
     }
-    pub fn current_line<'a>(&'a self, folds: &HashSet<(usize, Vec<usize>)>, width: u16) -> Line {
+    pub fn current_line<'a>(&'a self, folds: &HashSet<(usize, Vec<usize>)>, width: u16) -> Leaf {
         use FocusPosition::*;
         let folded = folds.contains(&self.to_path().strip_position());
         let content = match (&self.focus, self.focus_position, folded) {
-            (JV::Object(_), Start, false) => LineContent::ObjectStart,
-            (JV::Object(_), End, false) => LineContent::ObjectEnd,
-            (JV::Object(obj), Start, true) => LineContent::FoldedObject(obj.len() as usize),
-            (JV::Array(_), Start, false) => LineContent::ArrayStart,
-            (JV::Array(_), End, false) => LineContent::ArrayEnd,
-            (JV::Array(arr), Start, true) => LineContent::FoldedArray(arr.len() as usize),
-            (JV::Null(_), Value, _) => LineContent::Null,
-            (JV::Bool(b), Value, _) => LineContent::Bool(b.value()),
-            (JV::Number(x), Value, _) => LineContent::Number(x.value()),
-            (JV::String(s), Value, _) => LineContent::String(s.clone()),
+            (JV::Object(_), Start, false) => LeafContent::ObjectStart,
+            (JV::Object(_), End, false) => LeafContent::ObjectEnd,
+            (JV::Object(obj), Start, true) => LeafContent::FoldedObject(obj.len() as usize),
+            (JV::Array(_), Start, false) => LeafContent::ArrayStart,
+            (JV::Array(_), End, false) => LeafContent::ArrayEnd,
+            (JV::Array(arr), Start, true) => LeafContent::FoldedArray(arr.len() as usize),
+            (JV::Null(_), Value, _) => LeafContent::Null,
+            (JV::Bool(b), Value, _) => LeafContent::Bool(b.value()),
+            (JV::Number(x), Value, _) => LeafContent::Number(x.value()),
+            (JV::String(s), Value, _) => LeafContent::String(s.clone()),
             triple => panic!("Illegal json/focus_position/folded triple: {:?}", triple),
         };
         let key = self.current_key();
@@ -502,7 +502,7 @@ impl ValueCursor {
             },
         };
         let indent = self.current_indent(width);
-        Line {
+        Leaf {
             content,
             key,
             comma,
@@ -617,7 +617,7 @@ impl ValueCursor {
                 return Some(self);
             }
         }
-        let mut cursor = ValueCursor::new(self.jsons).expect("Jsons can't be empty here");
+        let mut cursor = LeafCursor::new(self.jsons).expect("Jsons can't be empty here");
         while !cursor.matches_path(&start) {
             if cursor.regex_matches(re) {
                 return Some(cursor);
@@ -636,7 +636,7 @@ impl ValueCursor {
                 return Some(self);
             }
         }
-        let mut cursor = ValueCursor::new_end(self.jsons).expect("Jsons can't be empty here");
+        let mut cursor = LeafCursor::new_end(self.jsons).expect("Jsons can't be empty here");
         while !cursor.matches_path(&start) {
             if cursor.regex_matches(re) {
                 return Some(cursor);
@@ -725,7 +725,7 @@ pub struct GlobalPath {
 
 #[cfg(test)]
 mod tests {
-    use super::{GlobalCursor, ValueCursor};
+    use super::{GlobalCursor, LeafCursor};
     use crate::{
         jq::jv::JV,
         lines::LineCursor,
@@ -739,7 +739,7 @@ mod tests {
     fn check_advancing_terminates(jsons: Vec<Value>) {
         let jsons: Vec<JV> = jsons.iter().map(|v| v.into()).collect();
         let folds = HashSet::new();
-        if let Some(mut cursor) = ValueCursor::new(jsons.into()) {
+        if let Some(mut cursor) = LeafCursor::new(jsons.into()) {
             let mut last_path = cursor.to_path();
             while let Some(()) = cursor.advance(&folds) {
                 let path = cursor.to_path();
@@ -789,9 +789,9 @@ mod tests {
     fn unit_lines() {
         check_lines(vec![json!([{ "": null }])]);
     }
-    fn check_path_roundtrip(cursor: &ValueCursor, jsons: Rc<[JV]>) {
+    fn check_path_roundtrip(cursor: &LeafCursor, jsons: Rc<[JV]>) {
         let path = cursor.to_path();
-        let new_cursor = ValueCursor::from_path(jsons, &path);
+        let new_cursor = LeafCursor::from_path(jsons, &path);
         assert_eq!(*cursor, new_cursor);
     }
     proptest! {
@@ -800,7 +800,7 @@ mod tests {
             let jsons : Vec<JV> = values.iter().map(|v| v.into()).collect();
             let jsons : Rc<[JV]> = jsons.into();
             let folds = HashSet::new();
-            if let Some(mut cursor) = ValueCursor::new(jsons.clone()) {
+            if let Some(mut cursor) = LeafCursor::new(jsons.clone()) {
                 check_path_roundtrip(&cursor, jsons.clone());
                 while let Some(()) = cursor.advance(&folds) {
                     check_path_roundtrip(&cursor, jsons.clone());
@@ -881,7 +881,7 @@ mod tests {
             let jsons : Vec<JV> = values.iter().map(|v| v.into()).collect();
             let jsons : Rc<[JV]> = jsons.into();
             let folds = HashSet::new();
-            if let Some(mut cursor) = ValueCursor::new(jsons) {
+            if let Some(mut cursor) = LeafCursor::new(jsons) {
                 let mut prior_path = cursor.to_path();
                 while let Some(()) = cursor.advance(&folds) {
                     let new_path = cursor.to_path();

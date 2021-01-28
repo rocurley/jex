@@ -1,6 +1,6 @@
 use crate::{
     jq::jv::JVString,
-    lines::{Line, LineContent, StrLine},
+    lines::{Leaf, LeafContent},
 };
 use proptest::prelude::*;
 use serde_json::value::Value;
@@ -26,7 +26,7 @@ pub fn arb_json() -> impl Strategy<Value = Value> {
     )
 }
 
-pub fn json_to_lines<'a, I: Iterator<Item = &'a Value>>(vs: I) -> Vec<Line> {
+pub fn json_to_lines<'a, I: Iterator<Item = &'a Value>>(vs: I) -> Vec<Leaf> {
     let mut out = Vec::new();
     for value in vs {
         json_to_lines_inner(None, value, 0, &mut out, false);
@@ -36,12 +36,12 @@ pub fn json_to_lines<'a, I: Iterator<Item = &'a Value>>(vs: I) -> Vec<Line> {
 
 fn push_line(
     key: Option<JVString>,
-    content: LineContent,
+    content: LeafContent,
     indent: u16,
-    out: &mut Vec<Line>,
+    out: &mut Vec<Leaf>,
     comma: bool,
 ) {
-    let line = Line {
+    let line = Leaf {
         content,
         key,
         indent,
@@ -54,20 +54,20 @@ fn json_to_lines_inner(
     key: Option<JVString>,
     v: &Value,
     indent: u16,
-    out: &mut Vec<Line>,
+    out: &mut Vec<Leaf>,
     comma: bool,
 ) {
     match v {
         Value::Null => {
-            push_line(key, LineContent::Null, indent, out, comma);
+            push_line(key, LeafContent::Null, indent, out, comma);
         }
         Value::Bool(b) => {
-            push_line(key, LineContent::Bool(*b), indent, out, comma);
+            push_line(key, LeafContent::Bool(*b), indent, out, comma);
         }
         Value::Number(x) => {
             push_line(
                 key,
-                LineContent::Number(x.as_f64().unwrap()),
+                LeafContent::Number(x.as_f64().unwrap()),
                 indent,
                 out,
                 comma,
@@ -76,27 +76,27 @@ fn json_to_lines_inner(
         Value::String(s) => {
             push_line(
                 key,
-                LineContent::String(JVString::new(s)),
+                LeafContent::String(JVString::new(s)),
                 indent,
                 out,
                 comma,
             );
         }
         Value::Array(xs) => {
-            push_line(key, LineContent::ArrayStart, indent, out, false);
+            push_line(key, LeafContent::ArrayStart, indent, out, false);
             for (i, x) in xs.iter().enumerate() {
                 let comma = i != xs.len() - 1;
                 json_to_lines_inner(None, x, indent + 2, out, comma);
             }
-            push_line(None, LineContent::ArrayEnd, indent, out, comma);
+            push_line(None, LeafContent::ArrayEnd, indent, out, comma);
         }
         Value::Object(xs) => {
-            push_line(key, LineContent::ObjectStart, indent, out, false);
+            push_line(key, LeafContent::ObjectStart, indent, out, false);
             for (i, (k, x)) in xs.iter().enumerate() {
                 let comma = i != xs.len() - 1;
                 json_to_lines_inner(Some(JVString::new(k)), x, indent + 2, out, comma);
             }
-            push_line(None, LineContent::ObjectEnd, indent, out, comma);
+            push_line(None, LeafContent::ObjectEnd, indent, out, comma);
         }
     }
 }
