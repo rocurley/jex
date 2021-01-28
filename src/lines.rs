@@ -140,42 +140,36 @@ fn is_unicode_escaped(c: char) -> bool {
 }
 
 pub fn escaped_str(s: &str) -> String {
-    let mut escaped_raw = Vec::new();
-    write_escaped_str(s, &mut escaped_raw).expect("Writing to a vector should be infaliable");
-    String::from_utf8(escaped_raw).expect("Escaped string was not utf-8")
-}
-
-fn write_escaped_str<W: std::io::Write>(s: &str, w: &mut W) -> std::io::Result<()> {
+    let mut out = String::new();
     let mut range_start = 0;
     for (i, c) in s.char_indices() {
         if is_escaped(c) {
-            write!(w, "{}", &s[range_start..i])?;
+            out.push_str(&s[range_start..i]);
             range_start = i + c.len_utf8();
-            write_escaped_char(c, w)?;
+            write_escaped_char(c, &mut out);
         }
     }
-    write!(w, "{}", &s[range_start..])?;
-    Ok(())
+    out.push_str(&s[range_start..]);
+    out
 }
 
-fn write_escaped_char<W: std::io::Write>(c: char, w: &mut W) -> std::io::Result<()> {
+fn write_escaped_char(c: char, w: &mut String) {
     match c {
-        '\"' => write!(w, r#"\""#),
-        '\\' => write!(w, r#"\\"#),
-        '\u{08}' => write!(w, r#"\b"#),
-        '\u{0C}' => write!(w, r#"\f"#),
-        '\n' => write!(w, r#"\n"#),
-        '\r' => write!(w, r#"\r"#),
-        '\t' => write!(w, r#"\t"#),
+        '\"' => w.push_str(r#"\""#),
+        '\\' => w.push_str(r#"\\"#),
+        '\u{08}' => w.push_str(r#"\b"#),
+        '\u{0C}' => w.push_str(r#"\f"#),
+        '\n' => w.push_str(r#"\n"#),
+        '\r' => w.push_str(r#"\r"#),
+        '\t' => w.push_str(r#"\t"#),
         _ if is_unicode_escaped(c) => {
             let mut buf = [0u16, 0];
             let encoded = c.encode_utf16(&mut buf);
             for pt in encoded {
-                write!(w, "\\u{:04x}", *pt)?; // \u1234
+                w.push_str(&format!("\\u{:04x}", *pt)); // \u1234
             }
-            Ok(())
         }
-        _ => write!(w, "{}", c),
+        _ => panic!("Shouldn't get here!"),
     }
 }
 
