@@ -9,7 +9,7 @@ use crate::{
 };
 use log::trace;
 use serde_json::Deserializer;
-use std::{collections::HashSet, io, io::Write, rc::Rc};
+use std::{collections::HashSet, io, io::Write, ops::RangeInclusive, rc::Rc};
 use tui::{
     layout::{Alignment, Rect},
     style::{Color, Style},
@@ -369,6 +369,12 @@ impl JsonView {
     pub fn resize_to(&mut self, json_rect: Rect) {
         self.rect = json_rect;
         self.scroll.resize_to(json_rect);
+        while self.cursor.to_path() < **self.visible_range(&self.folds).value_range().start() {
+            self.scroll.regress(&self.folds, self.rect.width);
+        }
+        while self.cursor.to_path() > **self.visible_range(&self.folds).value_range().end() {
+            self.scroll.advance(&self.folds, self.rect.width);
+        }
     }
     pub fn save_to(&self, path: &str) -> std::io::Result<()> {
         let mut file = std::fs::File::create(path)?;
@@ -390,8 +396,11 @@ pub struct GlobalPathRange {
 }
 
 impl GlobalPathRange {
+    pub fn value_range(&self) -> RangeInclusive<&ValuePath> {
+        &self.start.value_path..=&self.end.value_path
+    }
     pub fn contains_value(&self, path: &ValuePath) -> bool {
-        (&self.start.value_path..=&self.end.value_path).contains(&path)
+        self.value_range().contains(&path)
     }
     pub fn contains_value_start(&self, path: &ValuePath) -> bool {
         if !self.contains_value(path) {

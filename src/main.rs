@@ -95,7 +95,6 @@ struct BenchMode {}
 // so that would be pretty evil, but we might be able to operate directly on serde Values.
 //
 // TODO
-// * Bug: resizing can lose the cursor.
 // * Edit tree:
 //   * Children can be modified if they have no children
 //   * Allow copying descendents onto another root, so you if you want to modify a tree's root you
