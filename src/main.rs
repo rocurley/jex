@@ -326,6 +326,12 @@ fn run(json_path: String) -> Result<(), io::Error> {
                     KeyCode::Up => {
                         view.regress_cursor();
                     }
+                    KeyCode::PageDown => {
+                        view.page_down();
+                    }
+                    KeyCode::PageUp => {
+                        view.page_up();
+                    }
                     KeyCode::Char('z') => {
                         view.toggle_fold();
                     }

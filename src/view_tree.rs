@@ -313,6 +313,30 @@ impl JsonView {
             end_is_last_line: end_is_line_end,
         }
     }
+    pub fn page_down(&mut self) {
+        for _ in 1..self.rect.height {
+            if let None = self.scroll.advance(&self.folds, self.rect.width) {
+                break;
+            };
+        }
+        for _ in 1..self.rect.height {
+            if let None = self.cursor.advance(&self.folds) {
+                break;
+            };
+        }
+    }
+    pub fn page_up(&mut self) {
+        for _ in 1..self.rect.height {
+            if let None = self.scroll.regress(&self.folds, self.rect.width) {
+                break;
+            };
+        }
+        for _ in 1..self.rect.height {
+            if let None = self.cursor.regress(&self.folds) {
+                break;
+            };
+        }
+    }
     pub fn unfold_around_cursor(&mut self) {
         let mut path = self.cursor.to_path().strip_position();
         while !path.1.is_empty() {
