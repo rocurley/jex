@@ -100,7 +100,12 @@ struct BenchMode {}
 //   * Allow copying descendents onto another root, so you if you want to modify a tree's root you
 // can do so by making a new root and then copying over the descendents
 // * Lightweight error messages (no search results, can't fold a leaf, can't edit a non-leaf)
+//   * Probably requires timers, which requires us to be able to inject stuff into the event
+//   stream. Async? That would also let us show a loading message.
 // * Diffs
+// * Opening
+// * Rip out rustyline, or just use it's guts?
+//
 //
 // Rendering pipeline:
 // * Vec<JV>
@@ -290,16 +295,26 @@ fn run(json_path: String) -> Result<(), io::Error> {
             }
             KeyCode::Char('s') => {
                 terminal.draw(app.render(AppRenderMode::InputEditor))?;
-                let view_frame = app.focused_view();
-                if let View::Json(Some(view)) = &view_frame.view {
-                    match title_rl.readline_with_initial("Save to:", (&view_frame.name, "")) {
-                        Ok(path) => {
-                            if let Err(err) = view.save_to(&path) {
-                                app.set_flash(format!("Error saving json:\n{:?}", err));
+                let view_frame = app.focused_view_mut();
+                let flash = {
+                    if let View::Json(Some(view)) = &view_frame.view {
+                        match title_rl.readline_with_initial("Save to:", (&view_frame.name, "")) {
+                            Ok(path) => {
+                                if let Err(err) = view.save_to(&path) {
+                                    Some(format!("Error saving json:\n{:?}", err))
+                                } else {
+                                    view_frame.name = path;
+                                    None
+                                }
                             }
+                            Err(_) => None,
                         }
-                        Err(_) => {}
+                    } else {
+                        None
                     }
+                };
+                if let Some(flash) = flash {
+                    app.set_flash(flash);
                 }
                 force_draw(&mut terminal, app.render(AppRenderMode::Normal))?;
             }
