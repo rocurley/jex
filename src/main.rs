@@ -9,7 +9,7 @@ use jex::{
     app::{App, AppRenderMode, Focus},
     cursor::GlobalCursor,
     layout::JexLayout,
-    view_tree::View,
+    view_tree::{View, ViewForestIndex, ViewTree},
 };
 use log::debug;
 use regex::Regex;
@@ -103,7 +103,6 @@ struct BenchMode {}
 //   * Probably requires timers, which requires us to be able to inject stuff into the event
 //   stream. Async? That would also let us show a loading message.
 // * Diffs
-// * Opening
 // * Rip out rustyline, or just use it's guts?
 //
 //
@@ -267,20 +266,22 @@ fn run(json_path: String) -> Result<(), io::Error> {
             }
             KeyCode::Char('+') => {
                 if let Focus::Right = app.focus {
-                    app.index.parent.push(app.index.child);
+                    app.index
+                        .within_tree
+                        .parent
+                        .push(app.index.within_tree.child);
                 };
-                let tree = app
-                    .views
-                    .index_tree_mut(&app.index.parent)
+                let tree = app.views.trees[app.index.tree]
+                    .index_tree_mut(&app.index.within_tree.parent)
                     .expect("App index invalidated");
-                app.index.child = tree.children.len();
+                app.index.within_tree.child = tree.children.len();
                 tree.push_trivial_child(layout.right);
             }
             KeyCode::Char('j') => {
                 app.index.advance(&app.views);
             }
             KeyCode::Char('k') => {
-                app.index.regress();
+                app.index.regress(&app.views);
             }
             KeyCode::Char('r') => {
                 terminal.draw(app.render(AppRenderMode::InputEditor))?;
@@ -311,6 +312,19 @@ fn run(json_path: String) -> Result<(), io::Error> {
                         }
                     } else {
                         None
+                    }
+                };
+                if let Some(flash) = flash {
+                    app.set_flash(flash);
+                }
+                force_draw(&mut terminal, app.render(AppRenderMode::Normal))?;
+            }
+            KeyCode::Char('o') => {
+                terminal.draw(app.render(AppRenderMode::InputEditor))?;
+                let flash = {
+                    match title_rl.readline("Open:") {
+                        Ok(path) => app.open_file(path, layout).err().map(|err| err.to_string()),
+                        Err(_) => None,
                     }
                 };
                 if let Some(flash) = flash {

@@ -18,8 +18,47 @@ use tui::{
 };
 
 #[derive(Debug, Clone)]
+pub struct ViewForest {
+    pub trees: Vec<ViewTree>,
+}
+
+impl ViewForest {
+    pub fn index(&self, ix: &ViewForestIndex) -> Option<(&ViewFrame, &ViewFrame, &String)> {
+        let tree = self.trees.get(ix.tree)?;
+        tree.index(&ix.within_tree)
+    }
+    pub fn index_mut(
+        &mut self,
+        ix: &ViewForestIndex,
+    ) -> Option<(&mut ViewFrame, &mut ViewFrame, &mut String)> {
+        let tree = self.trees.get_mut(ix.tree)?;
+        tree.index_mut(&ix.within_tree)
+    }
+    pub fn render_tree(&self, index: &ViewForestIndex) -> Paragraph {
+        let mut spans = Vec::new();
+        for (i, tree) in self.trees.iter().enumerate() {
+            let tree_index = if i == index.tree {
+                Some(index.within_tree.borrowed())
+            } else {
+                None
+            };
+            render_tree_inner(
+                tree,
+                "",
+                i == self.trees.len() - 1,
+                tree_index,
+                false,
+                &mut spans,
+            )
+        }
+        Paragraph::new(spans).style(Style::default().fg(Color::White).bg(Color::Black))
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct ViewTree {
     pub view_frame: ViewFrame,
+    // (query, tree)
     pub children: Vec<(String, ViewTree)>,
 }
 
@@ -86,17 +125,6 @@ impl ViewTree {
         let (query, child_tree) = focus.children.get_mut(ix.child)?;
         Some((&mut focus.view_frame, &mut child_tree.view_frame, query))
     }
-    pub fn render_tree(&self, index: &ViewTreeIndex) -> Paragraph {
-        let is_parent = index.parent.is_empty();
-        let mut spans = vec![render_tree_entry(&self.view_frame.name, is_parent, false).into()];
-        for (i, (_, child)) in self.children.iter().enumerate() {
-            let end = i == self.children.len() - 1;
-            let is_child = is_parent && index.child == i;
-            let index = index.borrowed().descend(i);
-            render_tree_inner(child, "".into(), end, index, is_child, &mut spans);
-        }
-        Paragraph::new(spans).style(Style::default().fg(Color::White).bg(Color::Black))
-    }
 }
 
 fn render_tree_inner<'a, 'b>(
@@ -136,6 +164,41 @@ fn render_tree_entry(name: &str, is_parent: bool, is_child: bool) -> Span {
     Span::styled(name, style)
 }
 
+#[derive(Debug, Clone)]
+pub struct ViewForestIndex {
+    pub tree: usize,
+    pub within_tree: ViewTreeIndex,
+}
+
+impl ViewForestIndex {
+    pub fn advance(&mut self, forrest: &ViewForest) -> Option<()> {
+        if let Some(()) = self.within_tree.advance(&forrest.trees[self.tree]) {
+            return Some(());
+        }
+        if self.tree == forrest.trees.len() - 1 {
+            return None;
+        }
+        self.tree += 1;
+        self.within_tree = ViewTreeIndex {
+            parent: Vec::new(),
+            child: 0,
+        };
+        Some(())
+    }
+    pub fn regress(&mut self, forrest: &ViewForest) -> Option<()> {
+        if let Some(()) = self.within_tree.regress() {
+            return Some(());
+        }
+        if self.tree == 0 {
+            return None;
+        }
+        self.tree -= 1;
+        self.within_tree = ViewTreeIndex::new_at_end(&forrest.trees[self.tree]);
+        Some(())
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct ViewTreeIndex {
     pub parent: Vec<usize>,
     pub child: usize,
@@ -183,6 +246,7 @@ impl ViewTreeIndex {
             }
         }
     }
+    // TODO: this isn't the inverse of advance, which is weird
     pub fn regress(&mut self) -> Option<()> {
         if self.child == 0 {
             self.child = self.parent.pop()?;
@@ -190,6 +254,19 @@ impl ViewTreeIndex {
             self.child -= 1;
         }
         Some(())
+    }
+    pub fn new_at_end(mut tree: &ViewTree) -> Self {
+        let mut out = ViewTreeIndex {
+            parent: Vec::new(),
+            child: tree.children.len() - 1,
+        };
+        tree = &tree.children.last().unwrap().1;
+        while let Some(last_child) = tree.children.last() {
+            out.parent.push(out.child);
+            out.child = tree.children.len() - 1;
+            tree = &last_child.1;
+        }
+        out
     }
 }
 

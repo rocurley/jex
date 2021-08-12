@@ -1,11 +1,11 @@
 use crate::{
     cursor::GlobalCursor,
     layout::{self, JexLayout},
-    view_tree::{View, ViewFrame, ViewTree, ViewTreeIndex},
+    view_tree::{View, ViewForest, ViewForestIndex, ViewFrame, ViewTree, ViewTreeIndex},
 };
 use log::debug;
 use regex::Regex;
-use std::{default::Default, io};
+use std::{default::Default, fs, io};
 use tui::{
     layout::{Alignment, Rect},
     text::Text,
@@ -16,8 +16,8 @@ use tui::{
 const README: &str = include_str!("../README.md");
 
 pub struct App {
-    pub views: ViewTree,
-    pub index: ViewTreeIndex,
+    pub views: ViewForest,
+    pub index: ViewForestIndex,
     pub focus: Focus,
     pub search_re: Option<Regex>,
     pub show_tree: bool,
@@ -51,10 +51,15 @@ impl Focus {
 
 impl App {
     pub fn new<R: io::Read>(r: R, name: String, layout: JexLayout) -> io::Result<Self> {
-        let views = ViewTree::new_from_reader(r, name, layout)?;
-        let index = ViewTreeIndex {
-            parent: Vec::new(),
-            child: 0,
+        let views = ViewForest {
+            trees: vec![ViewTree::new_from_reader(r, name, layout)?],
+        };
+        let index = ViewForestIndex {
+            tree: 0,
+            within_tree: ViewTreeIndex {
+                parent: Vec::new(),
+                child: 0,
+            },
         };
         let app = App {
             views,
@@ -72,6 +77,7 @@ impl App {
             .expect("App index invalidated")
     }
     pub fn current_views_mut(&mut self) -> (&mut ViewFrame, &mut ViewFrame, &mut String) {
+        debug!("Index: {:?}", &self.index);
         self.views
             .index_mut(&self.index)
             .expect("App index invalidated")
@@ -221,5 +227,23 @@ impl App {
             .next()
             .unwrap();
         self.set_flash(controls.to_string());
+    }
+    pub fn open_file(
+        &mut self,
+        path: String,
+        layout: JexLayout,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let f = fs::File::open(&path)?;
+        let r = io::BufReader::new(f);
+        let new_tree = ViewTree::new_from_reader(r, path, layout)?;
+        self.views.trees.push(new_tree);
+        self.index = ViewForestIndex {
+            tree: self.views.trees.len() - 1,
+            within_tree: ViewTreeIndex {
+                child: 0,
+                parent: Vec::new(),
+            },
+        };
+        Ok(())
     }
 }
