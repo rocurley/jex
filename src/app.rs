@@ -77,7 +77,6 @@ impl App {
             .expect("App index invalidated")
     }
     pub fn current_views_mut(&mut self) -> (&mut ViewFrame, &mut ViewFrame, &mut String) {
-        debug!("Index: {:?}", &self.index);
         self.views
             .index_mut(&self.index)
             .expect("App index invalidated")

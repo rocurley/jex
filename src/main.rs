@@ -8,8 +8,9 @@ use crossterm::{
 use jex::{
     app::{App, AppRenderMode, Focus},
     cursor::GlobalCursor,
+    helper::Helper,
     layout::JexLayout,
-    view_tree::{View, ViewForestIndex, ViewTree},
+    view_tree::View,
 };
 use log::debug;
 use regex::Regex;
@@ -200,12 +201,19 @@ fn run(json_path: String) -> Result<(), io::Error> {
     let initial_layout = JexLayout::new(terminal.get_frame().size(), false);
     let mut app = App::new(r, json_path, initial_layout)?;
     terminal.draw(app.render(AppRenderMode::Normal))?;
-    let mut query_rl: rustyline::Editor<()> = rustyline::Editor::new();
-    let mut search_rl: rustyline::Editor<()> = rustyline::Editor::new();
-    let mut title_rl: rustyline::Editor<()> = rustyline::Editor::new();
+    let mut query_rl: rustyline::Editor<Helper> = rustyline::Editor::new();
+    let mut search_rl: rustyline::Editor<Helper> = rustyline::Editor::new();
+    let mut open_rl: rustyline::Editor<Helper> = rustyline::Editor::new();
+    let mut rename_rl: rustyline::Editor<Helper> = rustyline::Editor::new();
+    let mut save_rl: rustyline::Editor<Helper> = rustyline::Editor::new();
     query_rl.bind_sequence(rustyline::KeyPress::Esc, rustyline::Cmd::Interrupt);
     search_rl.bind_sequence(rustyline::KeyPress::Esc, rustyline::Cmd::Interrupt);
-    title_rl.bind_sequence(rustyline::KeyPress::Esc, rustyline::Cmd::Interrupt);
+    open_rl.bind_sequence(rustyline::KeyPress::Esc, rustyline::Cmd::Interrupt);
+    open_rl.set_helper(Some(Helper::new()));
+    rename_rl.bind_sequence(rustyline::KeyPress::Esc, rustyline::Cmd::Interrupt);
+    save_rl.bind_sequence(rustyline::KeyPress::Esc, rustyline::Cmd::Interrupt);
+    save_rl.set_helper(Some(Helper::new()));
+    rename_rl.bind_sequence(rustyline::KeyPress::Esc, rustyline::Cmd::Interrupt);
     loop {
         let event = event::read().expect("Error getting next event");
         debug!("Event: {:?}", event);
@@ -286,7 +294,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
             KeyCode::Char('r') => {
                 terminal.draw(app.render(AppRenderMode::InputEditor))?;
                 let view_frame = app.focused_view_mut();
-                match title_rl.readline_with_initial("New Title:", (&view_frame.name, "")) {
+                match rename_rl.readline_with_initial("New Title:", (&view_frame.name, "")) {
                     Ok(new_name) => {
                         view_frame.name = new_name;
                     }
@@ -299,7 +307,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
                 let view_frame = app.focused_view_mut();
                 let flash = {
                     if let View::Json(Some(view)) = &view_frame.view {
-                        match title_rl.readline_with_initial("Save to:", (&view_frame.name, "")) {
+                        match save_rl.readline_with_initial("Save to:", (&view_frame.name, "")) {
                             Ok(path) => {
                                 if let Err(err) = view.save_to(&path) {
                                     Some(format!("Error saving json:\n{:?}", err))
@@ -322,7 +330,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
             KeyCode::Char('o') => {
                 terminal.draw(app.render(AppRenderMode::InputEditor))?;
                 let flash = {
-                    match title_rl.readline("Open:") {
+                    match open_rl.readline("Open:") {
                         Ok(path) => app.open_file(path, layout).err().map(|err| err.to_string()),
                         Err(_) => None,
                     }
