@@ -5,6 +5,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use directories;
 use jex::{
     app::{App, AppRenderMode, Focus},
     cursor::GlobalCursor,
@@ -12,10 +13,19 @@ use jex::{
     layout::JexLayout,
     view_tree::View,
 };
-use log::debug;
+use log::{debug, warn};
 use regex::Regex;
 use simplelog::WriteLogger;
-use std::{default::Default, fs, fs::File, io, io::Write, panic};
+use std::{
+    default::Default,
+    error::Error,
+    fs,
+    fs::{create_dir_all, File},
+    io,
+    io::Write,
+    panic,
+    path::PathBuf,
+};
 use tui::{
     backend::CrosstermBackend,
     layout::Rect,
@@ -117,7 +127,7 @@ struct BenchMode {}
 // * Spans
 
 #[cfg(feature = "dev-tools")]
-fn main() -> Result<(), io::Error> {
+fn main() -> Result<(), Box<dyn Error>> {
     use coredump;
     coredump::register_panic_handler();
     let args: Args = argh::from_env();
@@ -129,7 +139,7 @@ fn main() -> Result<(), io::Error> {
 }
 
 #[cfg(not(feature = "dev-tools"))]
-fn main() -> Result<(), io::Error> {
+fn main() -> Result<(), Box<dyn Error>> {
     let args: Args = argh::from_env();
     init_logging(&args);
     run(args.json_path)
@@ -181,7 +191,37 @@ impl Drop for DeferRestoreTerminal {
     }
 }
 
-fn run(json_path: String) -> Result<(), io::Error> {
+struct RustylineWrapper {
+    history_path: PathBuf,
+    editor: rustyline::Editor<Helper>,
+}
+
+impl RustylineWrapper {
+    fn new(history_path: PathBuf) -> Result<Self, Box<dyn Error>> {
+        let config = rustyline::Config::builder().auto_add_history(true).build();
+        let mut editor = rustyline::Editor::with_config(config);
+        let _ = editor.history_mut().load(&history_path);
+        editor.bind_sequence(rustyline::KeyPress::Esc, rustyline::Cmd::Interrupt);
+        Ok(RustylineWrapper {
+            history_path,
+            editor,
+        })
+    }
+}
+impl Drop for RustylineWrapper {
+    fn drop(&mut self) {
+        let res = create_dir_all(self.history_path.parent().unwrap());
+        if let Err(err) = res {
+            warn!("Error creating directory: {:?}", err);
+        }
+        let res = self.editor.history().save(&self.history_path);
+        if let Err(err) = res {
+            warn!("Error saving history: {:?}", err);
+        }
+    }
+}
+
+fn run(json_path: String) -> Result<(), Box<dyn Error>> {
     enable_raw_mode().expect("Failed to enter raw mode");
 
     let mut stdout = io::stdout();
@@ -201,19 +241,17 @@ fn run(json_path: String) -> Result<(), io::Error> {
     let initial_layout = JexLayout::new(terminal.get_frame().size(), false);
     let mut app = App::new(r, json_path, initial_layout)?;
     terminal.draw(app.render(AppRenderMode::Normal))?;
-    let mut query_rl: rustyline::Editor<Helper> = rustyline::Editor::new();
-    let mut search_rl: rustyline::Editor<Helper> = rustyline::Editor::new();
-    let mut open_rl: rustyline::Editor<Helper> = rustyline::Editor::new();
-    let mut rename_rl: rustyline::Editor<Helper> = rustyline::Editor::new();
-    let mut save_rl: rustyline::Editor<Helper> = rustyline::Editor::new();
-    query_rl.bind_sequence(rustyline::KeyPress::Esc, rustyline::Cmd::Interrupt);
-    search_rl.bind_sequence(rustyline::KeyPress::Esc, rustyline::Cmd::Interrupt);
-    open_rl.bind_sequence(rustyline::KeyPress::Esc, rustyline::Cmd::Interrupt);
-    open_rl.set_helper(Some(Helper::new()));
-    rename_rl.bind_sequence(rustyline::KeyPress::Esc, rustyline::Cmd::Interrupt);
-    save_rl.bind_sequence(rustyline::KeyPress::Esc, rustyline::Cmd::Interrupt);
-    save_rl.set_helper(Some(Helper::new()));
-    rename_rl.bind_sequence(rustyline::KeyPress::Esc, rustyline::Cmd::Interrupt);
+    let project_dirs =
+        directories::ProjectDirs::from("", "", "jex").ok_or("Error getting project dirs")?;
+    let cache_dir = project_dirs.cache_dir();
+    let mut query_rl = RustylineWrapper::new(cache_dir.join("query_history"))?;
+    let mut search_rl = RustylineWrapper::new(cache_dir.join("search_history"))?;
+    let mut open_rl = RustylineWrapper::new(cache_dir.join("open_history"))?;
+    let mut rename_rl = RustylineWrapper::new(cache_dir.join("rename_history"))?;
+    let mut save_rl = RustylineWrapper::new(cache_dir.join("save_history"))?;
+
+    open_rl.editor.set_helper(Some(Helper::new()));
+    save_rl.editor.set_helper(Some(Helper::new()));
     loop {
         let event = event::read().expect("Error getting next event");
         debug!("Event: {:?}", event);
@@ -258,7 +296,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
             KeyCode::Char('q') => {
                 terminal.draw(app.render(AppRenderMode::InputEditor))?;
                 let (_, _, query) = app.current_views_mut();
-                match query_rl.readline_with_initial("", (&*query, "")) {
+                match query_rl.editor.readline_with_initial("", (&*query, "")) {
                     Ok(new_query) => {
                         *query = new_query;
                         // Just in case rustyline messed stuff up
@@ -294,7 +332,10 @@ fn run(json_path: String) -> Result<(), io::Error> {
             KeyCode::Char('r') => {
                 terminal.draw(app.render(AppRenderMode::InputEditor))?;
                 let view_frame = app.focused_view_mut();
-                match rename_rl.readline_with_initial("New Title:", (&view_frame.name, "")) {
+                match rename_rl
+                    .editor
+                    .readline_with_initial("New Title:", (&view_frame.name, ""))
+                {
                     Ok(new_name) => {
                         view_frame.name = new_name;
                     }
@@ -307,7 +348,10 @@ fn run(json_path: String) -> Result<(), io::Error> {
                 let view_frame = app.focused_view_mut();
                 let flash = {
                     if let View::Json(Some(view)) = &view_frame.view {
-                        match save_rl.readline_with_initial("Save to:", (&view_frame.name, "")) {
+                        match save_rl
+                            .editor
+                            .readline_with_initial("Save to:", (&view_frame.name, ""))
+                        {
                             Ok(path) => {
                                 if let Err(err) = view.save_to(&path) {
                                     Some(format!("Error saving json:\n{:?}", err))
@@ -330,7 +374,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
             KeyCode::Char('o') => {
                 terminal.draw(app.render(AppRenderMode::InputEditor))?;
                 let flash = {
-                    match open_rl.readline("Open:") {
+                    match open_rl.editor.readline("Open:") {
                         Ok(path) => app.open_file(path, layout).err().map(|err| err.to_string()),
                         Err(_) => None,
                     }
@@ -374,7 +418,7 @@ fn run(json_path: String) -> Result<(), io::Error> {
                     }
                     KeyCode::Char('/') => {
                         terminal.draw(app.render(AppRenderMode::InputEditor))?;
-                        match search_rl.readline_with_initial("Search:", ("", "")) {
+                        match search_rl.editor.readline_with_initial("Search:", ("", "")) {
                             Ok(new_search) => {
                                 // Just in case rustyline messed stuff up
                                 force_draw(&mut terminal, app.render(AppRenderMode::Normal))?;
