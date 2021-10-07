@@ -114,6 +114,22 @@ struct BenchMode {}
 //   * Probably requires timers, which requires us to be able to inject stuff into the event
 //   stream. Async? That would also let us show a loading message.
 // * Diffs
+//   * UI
+//     * Need to make left and right pane independent
+//     * Show tree with (l) and (r) to show where panes are
+//     * Query is with respect to parent, which may not be visible
+//     * Root nodes have no query
+//     * Once this is implemented, can turn on diffing
+//   * Backend
+//     * Current implementation kind of sucks since it needs O(n) memory
+//     * Meyer diff may require O(n) memory anyway, but no need to do it twice
+//     * Index trait is a problem for anything fancy since you need to return a reference
+//     * Meyer will return results in usize ranges. Need to be able to interpret those
+//     * Cursor needs to track the diff-element index to make this reverse mapping possible
+//   * Plan
+//     * Do the UI stuff
+//     * Add index tracking to the cursor
+//     * Get an MVP with the stupid allocating thing working
 // * Rip out rustyline, or just use it's guts?
 //
 //

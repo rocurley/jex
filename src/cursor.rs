@@ -789,23 +789,30 @@ mod tests {
     fn unit_lines() {
         check_lines(vec![json!([{ "": null }])]);
     }
-    fn check_path_roundtrip(cursor: &LeafCursor, jsons: Rc<[JV]>) {
+    fn check_path_roundtrip_inner(cursor: &LeafCursor, jsons: Rc<[JV]>) {
         let path = cursor.to_path();
         let new_cursor = LeafCursor::from_path(jsons, &path);
         assert_eq!(*cursor, new_cursor);
     }
+    fn check_path_roundtrip(values: Vec<serde_json::Value>) {
+        let jsons: Vec<JV> = values.iter().map(|v| v.into()).collect();
+        let jsons: Rc<[JV]> = jsons.into();
+        let folds = HashSet::new();
+        if let Some(mut cursor) = LeafCursor::new(jsons.clone()) {
+            check_path_roundtrip_inner(&cursor, jsons.clone());
+            while let Some(()) = cursor.advance(&folds) {
+                check_path_roundtrip_inner(&cursor, jsons.clone());
+            }
+        }
+    }
+    #[test]
+    fn unit_path_roundtrip() {
+        check_path_roundtrip(vec![json!([{ "": null }])])
+    }
     proptest! {
         #[test]
         fn prop_path_roundtrip(values in proptest::collection::vec(arb_json(), 1..10)) {
-            let jsons : Vec<JV> = values.iter().map(|v| v.into()).collect();
-            let jsons : Rc<[JV]> = jsons.into();
-            let folds = HashSet::new();
-            if let Some(mut cursor) = LeafCursor::new(jsons.clone()) {
-                check_path_roundtrip(&cursor, jsons.clone());
-                while let Some(()) = cursor.advance(&folds) {
-                    check_path_roundtrip(&cursor, jsons.clone());
-                }
-            }
+            check_path_roundtrip(values)
         }
     }
     fn check_advance_regress(

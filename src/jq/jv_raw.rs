@@ -1,18 +1,26 @@
 use super::jv::{JVString, JV};
 use jq_sys::{
     jv, jv_array, jv_array_get, jv_array_length, jv_array_set, jv_bool, jv_copy, jv_equal, jv_free,
-    jv_get_kind, jv_invalid_get_msg, jv_invalid_has_msg, jv_kind_JV_KIND_ARRAY,
+    jv_get_kind, jv_get_refcnt, jv_invalid_get_msg, jv_invalid_has_msg, jv_kind_JV_KIND_ARRAY,
     jv_kind_JV_KIND_FALSE, jv_kind_JV_KIND_INVALID, jv_kind_JV_KIND_NULL, jv_kind_JV_KIND_NUMBER,
     jv_kind_JV_KIND_OBJECT, jv_kind_JV_KIND_STRING, jv_kind_JV_KIND_TRUE, jv_null, jv_number,
-    jv_number_value, jv_object, jv_object_iter, jv_object_iter_key, jv_object_iter_next,
-    jv_object_iter_valid, jv_object_iter_value, jv_object_length, jv_object_set, jv_parse_sized,
-    jv_string_length_bytes, jv_string_sized, jv_string_value,
+    jv_number_value, jv_object, jv_object_get, jv_object_iter, jv_object_iter_key,
+    jv_object_iter_next, jv_object_iter_valid, jv_object_iter_value, jv_object_length,
+    jv_object_set, jv_parse_sized, jv_string_length_bytes, jv_string_sized, jv_string_value,
 };
 use serde_json::value::Value;
-use std::{convert::TryInto, fmt, iter::FromIterator, mem::forget, os::raw::c_char, slice, str};
+use std::{
+    convert::{TryFrom, TryInto},
+    fmt,
+    hash::{Hash, Hasher},
+    iter::FromIterator,
+    mem::forget,
+    os::raw::c_char,
+    slice, str,
+};
 
 #[repr(transparent)]
-pub(super) struct JVRaw {
+pub struct JVRaw {
     pub ptr: jv,
 }
 impl fmt::Debug for JVRaw {
@@ -80,6 +88,16 @@ impl JVRaw {
         let key = JVRaw::string(k);
         self.ptr =
             unsafe { jv_object_set(self.ptr, key.unwrap_without_drop(), v.unwrap_without_drop()) };
+    }
+    pub fn object_get(&self, k: &str) -> JVRaw {
+        let key = JVRaw::string(k);
+        let ptr = unsafe {
+            jv_object_get(
+                self.clone().unwrap_without_drop(),
+                key.unwrap_without_drop(),
+            )
+        };
+        JVRaw { ptr }
     }
     pub fn bool(b: bool) -> Self {
         JVRaw {
@@ -212,6 +230,15 @@ impl JVRaw {
                 jv_parse_sized(s.as_ptr() as *const c_char, s.len().try_into().unwrap())
             },
         }
+    }
+    pub fn refcount(&self) -> i32 {
+        unsafe { jv_get_refcnt(self.ptr) }
+    }
+}
+
+impl Hash for JVRaw {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        JV::try_from(self.clone()).hash(state)
     }
 }
 

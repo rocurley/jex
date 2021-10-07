@@ -44,6 +44,7 @@ regex = "1.4"
 log = "0.4.13"
 simplelog = { version = "0.9", features = ["test"] }
 directories = "3.0.2"
+similar = "1.3.0"
 [dependencies.jq-sys]
 version = "0.2.2"
 features = ["bundled"]

@@ -1,5 +1,6 @@
 pub mod app;
 pub mod cursor;
+mod diff;
 pub mod helper;
 pub mod jq;
 pub mod layout;

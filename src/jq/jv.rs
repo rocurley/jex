@@ -1,5 +1,5 @@
-use super::jv_raw::{JVKind, JVRaw};
-pub use super::jv_raw::{ObjectIterator, ObjectValuesIterator, OwnedObjectIterator};
+use super::jv_raw::JVKind;
+pub use super::jv_raw::{JVRaw, ObjectIterator, ObjectValuesIterator, OwnedObjectIterator};
 use serde::{
     de::{MapAccess, SeqAccess, Visitor},
     ser::{SerializeMap, SerializeSeq},
@@ -7,24 +7,26 @@ use serde::{
 };
 use serde_json::value::Value;
 use std::{
+    cmp::Ordering,
     convert::{TryFrom, TryInto},
     fmt,
+    hash::{Hash, Hasher},
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Eq)]
 pub struct JVNull(JVRaw);
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Eq)]
 pub struct JVBool(JVRaw);
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Eq)]
 pub struct JVNumber(JVRaw);
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Eq)]
 pub struct JVString(JVRaw);
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Eq)]
 pub struct JVArray(JVRaw);
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Eq)]
 pub struct JVObject(JVRaw);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum JV {
     Null(JVNull),
     Bool(JVBool),
@@ -134,6 +136,9 @@ impl JVObject {
     }
     pub fn set(&mut self, k: &str, v: JV) {
         self.0.object_set(k, v.into())
+    }
+    pub fn get(&self, k: &str) -> Option<JV> {
+        self.0.object_get(k).try_into().ok()
     }
     pub fn iter(&self) -> ObjectIterator {
         self.0.object_iter()
@@ -399,6 +404,140 @@ impl JV {
         JVRaw::parse_native(s).try_into()
     }
 }
+
+impl PartialEq for JVNull {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl PartialEq for JVBool {
+    fn eq(&self, other: &Self) -> bool {
+        self.value() == other.value()
+    }
+}
+
+impl PartialEq for JVString {
+    fn eq(&self, other: &Self) -> bool {
+        self.value() == other.value()
+    }
+}
+
+// Not IEEE complient! For diffing we want NaN == NaN
+impl PartialEq for JVNumber {
+    fn eq(&self, other: &Self) -> bool {
+        self.value().to_bits() == other.value().to_bits()
+    }
+}
+
+impl PartialEq for JVArray {
+    fn eq(&self, other: &Self) -> bool {
+        dbg!(self, self.0.refcount());
+        if self.len() != other.len() {
+            return false;
+        }
+        self.iter().zip(other.iter()).all(|(x, y)| x == y)
+    }
+}
+
+impl PartialEq for JVObject {
+    fn eq(&self, other: &Self) -> bool {
+        dbg!(self, self.0.refcount(), unsafe {
+            self.0.ptr.u.ptr == other.0.ptr.u.ptr
+        });
+        if self.len() != other.len() {
+            return false;
+        }
+        self.iter().all(|(k, v)| other.get(k) == Some(v))
+    }
+}
+impl Ord for JVNull {
+    fn cmp(&self, _other: &Self) -> Ordering {
+        Ordering::Equal
+    }
+}
+impl PartialOrd for JVNull {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for JVBool {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.value().cmp(&other.value())
+    }
+}
+impl PartialOrd for JVBool {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for JVNumber {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let x = self.value();
+        let y = other.value();
+        match (x.is_nan(), y.is_nan()) {
+            (true, true) => Ordering::Equal,
+            (false, true) => Ordering::Less,
+            (true, false) => Ordering::Greater,
+            (false, false) => x.partial_cmp(&y).unwrap(),
+        }
+    }
+}
+impl PartialOrd for JVNumber {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for JVString {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.value().cmp(&other.value())
+    }
+}
+impl PartialOrd for JVString {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Hash for JVNull {
+    fn hash<H: Hasher>(&self, _state: &mut H) {}
+}
+impl Hash for JVBool {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.value().hash(state)
+    }
+}
+impl Hash for JVString {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.value().hash(state)
+    }
+}
+impl Hash for JVNumber {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.value().to_bits().hash(state)
+    }
+}
+impl Hash for JVArray {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        for x in self.iter() {
+            x.hash(state)
+        }
+    }
+}
+impl Hash for JVObject {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        for kv in self.iter() {
+            kv.hash(state)
+        }
+    }
+}
+
+impl fmt::Debug for JVString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("JVString").field(&self.value()).finish()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::JV;
