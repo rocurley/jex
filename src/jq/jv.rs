@@ -432,7 +432,6 @@ impl PartialEq for JVNumber {
 
 impl PartialEq for JVArray {
     fn eq(&self, other: &Self) -> bool {
-        dbg!(self, self.0.refcount());
         if self.len() != other.len() {
             return false;
         }
@@ -442,9 +441,6 @@ impl PartialEq for JVArray {
 
 impl PartialEq for JVObject {
     fn eq(&self, other: &Self) -> bool {
-        dbg!(self, self.0.refcount(), unsafe {
-            self.0.ptr.u.ptr == other.0.ptr.u.ptr
-        });
         if self.len() != other.len() {
             return false;
         }

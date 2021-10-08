@@ -116,7 +116,6 @@ struct BenchMode {}
 // * Diffs
 //   * UI
 //     * Need to make left and right pane independent
-//     * Show tree with (l) and (r) to show where panes are
 //     * Query is with respect to parent, which may not be visible
 //     * Root nodes have no query
 //     * Once this is implemented, can turn on diffing
@@ -311,15 +310,16 @@ fn run(json_path: String) -> Result<(), Box<dyn Error>> {
             }
             KeyCode::Char('q') => {
                 terminal.draw(app.render(AppRenderMode::InputEditor))?;
-                let (_, _, query) = app.current_views_mut();
-                match query_rl.editor.readline_with_initial("", (&*query, "")) {
-                    Ok(new_query) => {
-                        *query = new_query;
-                        // Just in case rustyline messed stuff up
-                        force_draw(&mut terminal, app.render(AppRenderMode::Normal))?;
-                        app.recompute_right(layout.right);
+                if let Some(query) = app.focused_query_mut() {
+                    match query_rl.editor.readline_with_initial("", (&*query, "")) {
+                        Ok(new_query) => {
+                            *query = new_query;
+                            // Just in case rustyline messed stuff up
+                            force_draw(&mut terminal, app.render(AppRenderMode::Normal))?;
+                            app.recompute_focused_view(layout.right);
+                        }
+                        Err(_) => {}
                     }
-                    Err(_) => {}
                 }
             }
             KeyCode::Tab => {
@@ -327,33 +327,31 @@ fn run(json_path: String) -> Result<(), Box<dyn Error>> {
                 debug!("Swapped focus to {:?}", app.focus);
             }
             KeyCode::Char('+') => {
-                if let Focus::Right = app.focus {
-                    app.index
-                        .within_tree
-                        .parent
-                        .push(app.index.within_tree.child);
+                let (index, rect) = match app.focus {
+                    Focus::Left => (&app.left_index, layout.left),
+                    Focus::Right => (&app.right_index, layout.right),
                 };
-                let tree = app.views.trees[app.index.tree]
-                    .index_tree_mut(&app.index.within_tree.parent)
+                let tree = app.views.trees[index.tree]
+                    .index_tree_mut(&index.within_tree.path)
                     .expect("App index invalidated");
-                app.index.within_tree.child = tree.children.len();
-                tree.push_trivial_child(layout.right);
+                tree.push_trivial_child(rect);
             }
             KeyCode::Char('j') => {
-                app.index.advance(&app.views);
+                app.left_index.advance(&app.views);
             }
             KeyCode::Char('k') => {
-                app.index.regress(&app.views);
+                app.left_index.regress(&app.views);
             }
             KeyCode::Char('r') => {
                 terminal.draw(app.render(AppRenderMode::InputEditor))?;
-                let view_frame = app.focused_view_mut();
+                let mut view_with_parent = app.focused_view_mut();
+                let frame = view_with_parent.frame();
                 match rename_rl
                     .editor
-                    .readline_with_initial("New Title:", (&view_frame.name, ""))
+                    .readline_with_initial("New Title:", (&frame.name, ""))
                 {
                     Ok(new_name) => {
-                        view_frame.name = new_name;
+                        frame.name = new_name;
                     }
                     Err(_) => {}
                 }
@@ -361,18 +359,19 @@ fn run(json_path: String) -> Result<(), Box<dyn Error>> {
             }
             KeyCode::Char('s') => {
                 terminal.draw(app.render(AppRenderMode::InputEditor))?;
-                let view_frame = app.focused_view_mut();
+                let mut view_with_parent = app.focused_view_mut();
+                let frame = view_with_parent.frame();
                 let flash = {
-                    if let View::Json(Some(view)) = &view_frame.view {
+                    if let View::Json(Some(view)) = &frame.view {
                         match save_rl
                             .editor
-                            .readline_with_initial("Save to:", (&view_frame.name, ""))
+                            .readline_with_initial("Save to:", (&frame.name, ""))
                         {
                             Ok(path) => {
                                 if let Err(err) = view.save_to(&path) {
                                     Some(format!("Error saving json:\n{:?}", err))
                                 } else {
-                                    view_frame.name = path;
+                                    frame.name = path;
                                     None
                                 }
                             }
@@ -409,7 +408,8 @@ fn run(json_path: String) -> Result<(), Box<dyn Error>> {
             Focus::Left => layout.left,
             Focus::Right => layout.right,
         };
-        let view_frame = app.focused_view_mut();
+        let mut view_with_parent = app.focused_view_mut();
+        let view_frame = view_with_parent.frame();
         let json_rect = Block::default().borders(Borders::ALL).inner(view_rect);
         match &mut view_frame.view {
             View::Error(_) => {}
