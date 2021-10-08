@@ -81,6 +81,12 @@ impl ViewForest {
         left_index: &ViewForestIndex,
         right_index: &ViewForestIndex,
     ) -> Paragraph {
+        trace!(
+            "Rendering tree:\nleft:{:?}\nright:{:?}\ntrees:{:#?}",
+            left_index,
+            right_index,
+            &self.trees
+        );
         let mut spans = Vec::new();
         for (i, tree) in self.trees.iter().enumerate() {
             let left_tree_index = if i == left_index.tree {
@@ -89,7 +95,7 @@ impl ViewForest {
                 None
             };
             let right_tree_index = if i == right_index.tree {
-                Some(left_index.within_tree.borrowed())
+                Some(right_index.within_tree.borrowed())
             } else {
                 None
             };
@@ -212,6 +218,13 @@ fn render_tree_inner<'a, 'b>(
 ) {
     let is_left = left_index.map_or(false, |index| index.parent.is_empty());
     let is_right = right_index.map_or(false, |index| index.parent.is_empty());
+    trace!(
+        "{:?}, {:?}, {:?}, {:?}",
+        left_index,
+        right_index,
+        is_left,
+        is_right
+    );
     let mid = if end { "└" } else { "├" };
     out.push(
         vec![
@@ -235,7 +248,7 @@ fn render_tree_entry(name: &str, is_parent: bool, is_child: bool) -> Span {
         (false, false) => Span::raw(name),
         (true, false) => Span::styled(format!("(L) {}", name), Style::default().fg(Color::Blue)),
         (false, true) => Span::styled(format!("(R) {}", name), Style::default().fg(Color::Yellow)),
-        (true, true) => panic!("Can't be both a parent and a child"),
+        (true, true) => Span::styled(format!("(LR) {}", name), Style::default().fg(Color::Green)),
     }
 }
 
@@ -258,7 +271,7 @@ impl ViewForestIndex {
         Some(())
     }
     pub fn regress(&mut self, forrest: &ViewForest) -> Option<()> {
-        if let Some(()) = self.within_tree.regress() {
+        if let Some(()) = self.within_tree.regress(&forrest.trees[self.tree]) {
             return Some(());
         }
         if self.tree == 0 {
@@ -311,19 +324,21 @@ impl ViewTreeIndex {
             }
         }
     }
-    pub fn regress(&mut self) -> Option<()> {
-        while let Some(last) = self.path.last_mut() {
-            if *last > 0 {
-                *last -= 1;
-                return Some(());
-            }
+    pub fn regress(&mut self, views: &ViewTree) -> Option<()> {
+        let last = self.path.last_mut()?;
+        if *last > 0 {
+            *last -= 1;
+            let ancestor = views.index_tree(&self.path).unwrap();
+            let to_child = ViewTreeIndex::new_at_end(ancestor);
+            trace!("{:?},{:?}", &*self, &to_child);
+            self.path.extend(to_child.path);
+        } else {
             self.path.pop();
         }
-        None
+        Some(())
     }
     pub fn new_at_end(mut tree: &ViewTree) -> Self {
         let mut out = ViewTreeIndex { path: Vec::new() };
-        tree = &tree.children.last().unwrap().1;
         while let Some(last_child) = tree.children.last() {
             out.path.push(tree.children.len() - 1);
             tree = &last_child.1;
@@ -332,7 +347,7 @@ impl ViewTreeIndex {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 struct BorrowedViewTreeIndex<'a> {
     parent: &'a [usize],
 }

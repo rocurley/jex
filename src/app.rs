@@ -117,6 +117,12 @@ impl App {
             ViewWithParentMut::Child { query, .. } => Some(query),
         }
     }
+    pub fn focused_index_mut(&mut self) -> &mut ViewForestIndex {
+        match self.focus {
+            Focus::Left => &mut self.left_index,
+            Focus::Right => &mut self.right_index,
+        }
+    }
     pub fn recompute_focused_view(&mut self, focused_rect: Rect) {
         match self.focused_view_mut() {
             ViewWithParentMut::Root { .. } => panic!("Can't recompute root node"),

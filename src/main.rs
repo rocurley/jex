@@ -336,12 +336,22 @@ fn run(json_path: String) -> Result<(), Box<dyn Error>> {
                     .expect("App index invalidated");
                 tree.push_trivial_child(rect);
             }
-            KeyCode::Char('j') => {
-                app.left_index.advance(&app.views);
-            }
-            KeyCode::Char('k') => {
-                app.left_index.regress(&app.views);
-            }
+            KeyCode::Char('j') => match app.focus {
+                Focus::Left => {
+                    app.left_index.advance(&app.views);
+                }
+                Focus::Right => {
+                    app.right_index.advance(&app.views);
+                }
+            },
+            KeyCode::Char('k') => match app.focus {
+                Focus::Left => {
+                    app.left_index.regress(&app.views);
+                }
+                Focus::Right => {
+                    app.right_index.regress(&app.views);
+                }
+            },
             KeyCode::Char('r') => {
                 terminal.draw(app.render(AppRenderMode::InputEditor))?;
                 let mut view_with_parent = app.focused_view_mut();
