@@ -6,7 +6,7 @@ use crate::{
         ViewWithParentMut,
     },
 };
-use log::debug;
+use log::{debug, trace};
 use regex::Regex;
 use std::{default::Default, fs, io};
 use tui::{
@@ -78,6 +78,12 @@ impl App {
         Ok(app)
     }
     fn current_views(&self) -> (ViewWithParent, ViewWithParent) {
+        trace!(
+            "current_views:\nleft:{:#?}\nright:{:#?}\ntree:{:#?}",
+            self.left_index,
+            self.right_index,
+            self.views,
+        );
         let left = self
             .views
             .index(&self.left_index)
@@ -117,6 +123,12 @@ impl App {
             ViewWithParentMut::Child { query, .. } => Some(query),
         }
     }
+    pub fn focused_index(&self) -> &ViewForestIndex {
+        match self.focus {
+            Focus::Left => &self.left_index,
+            Focus::Right => &self.right_index,
+        }
+    }
     pub fn focused_index_mut(&mut self) -> &mut ViewForestIndex {
         match self.focus {
             Focus::Left => &mut self.left_index,
@@ -139,6 +151,31 @@ impl App {
                 }
             },
         }
+    }
+    pub fn re_root(&mut self, index: &ViewForestIndex) {
+        if index.within_tree.path.is_empty() {
+            return;
+        }
+        let (&child_ix, parent_path) = index.within_tree.path.split_last().unwrap();
+        let target_parent = self.views.trees[index.tree]
+            .index_tree_mut(parent_path)
+            .expect("Invalid index");
+        let (_, subtree) = target_parent.children.remove(child_ix);
+        self.views.trees.push(subtree);
+        let destination = ViewForestIndex {
+            tree: self.views.trees.len() - 1,
+            within_tree: ViewTreeIndex { path: vec![] },
+        };
+        self.left_index.update_after_move(index, &destination);
+        self.right_index.update_after_move(index, &destination);
+        trace!(
+            "re_root:\nleft:{:#?}\nright:{:#?}\norigin:{:#?}\ndestination:{:#?}\ntree:{:#?}",
+            self.left_index,
+            self.right_index,
+            index,
+            destination,
+            self.views,
+        );
     }
     pub fn render<B: tui::backend::Backend>(
         &self,

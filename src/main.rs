@@ -309,8 +309,9 @@ fn run(json_path: String) -> Result<(), Box<dyn Error>> {
                 app.show_tree = !app.show_tree;
             }
             KeyCode::Char('q') => {
-                terminal.draw(app.render(AppRenderMode::InputEditor))?;
-                if let Some(query) = app.focused_query_mut() {
+                if app.focused_query_mut().is_some() {
+                    terminal.draw(app.render(AppRenderMode::InputEditor))?;
+                    let query = app.focused_query_mut().unwrap();
                     match query_rl.editor.readline_with_initial("", (&*query, "")) {
                         Ok(new_query) => {
                             *query = new_query;
@@ -382,6 +383,8 @@ fn run(json_path: String) -> Result<(), Box<dyn Error>> {
                                     Some(format!("Error saving json:\n{:?}", err))
                                 } else {
                                     frame.name = path;
+                                    let focused_index = app.focused_index().clone();
+                                    app.re_root(&focused_index);
                                     None
                                 }
                             }

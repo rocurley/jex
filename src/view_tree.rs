@@ -9,7 +9,7 @@ use crate::{
 };
 use log::trace;
 use serde_json::Deserializer;
-use std::{collections::HashSet, io, io::Write, ops::RangeInclusive, rc::Rc};
+use std::{cmp::Ordering, collections::HashSet, io, io::Write, ops::RangeInclusive, rc::Rc};
 use tui::{
     layout::{Alignment, Rect},
     style::{Color, Style},
@@ -280,6 +280,44 @@ impl ViewForestIndex {
         self.tree -= 1;
         self.within_tree = ViewTreeIndex::new_at_end(&forrest.trees[self.tree]);
         Some(())
+    }
+    // updates self to be consistent with a move of origin to destination.
+    pub fn update_after_move(&mut self, origin: &Self, destination: &Self) {
+        if origin.tree != self.tree {
+            return;
+        }
+        for (x, y) in self
+            .within_tree
+            .path
+            .iter_mut()
+            .zip(origin.within_tree.path.iter())
+        {
+            match (*x).cmp(y) {
+                Ordering::Less => return,
+                Ordering::Equal => continue,
+                Ordering::Greater => {
+                    *x -= 1;
+                    return;
+                }
+            }
+        }
+        match self
+            .within_tree
+            .path
+            .len()
+            .cmp(&origin.within_tree.path.len())
+        {
+            Ordering::Less => return, // Ancestor of origin
+            Ordering::Equal => *self = destination.clone(),
+            Ordering::Greater => {
+                // Descendent of origin
+                let mut new_self = destination.clone();
+                new_self
+                    .within_tree
+                    .path
+                    .extend(&self.within_tree.path[origin.within_tree.path.len()..]);
+            }
+        }
     }
 }
 
